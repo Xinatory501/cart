@@ -316,7 +316,7 @@ class ThreadService:
 
             user = await user_repo.get_by_id(user_id)
             if user and user.thread_id == thread_id:
-            await user_repo.update_thread_id(user_id, None)
+             await user_repo.update_thread_id(user_id, None)
 
     async def ensure_log_thread(self) -> Optional[int]:
         if not self._is_support_group_configured():
