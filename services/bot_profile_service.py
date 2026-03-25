@@ -19,44 +19,68 @@ class BotProfile:
 _RUNTIME_PROFILES: Dict[int, BotProfile] = {}
 
 
+_PROFILE_DEFINITIONS = [
+    (
+        "BOT1",
+        "belarus",
+        "ru",
+        "🇧🇾",
+        lambda: settings.bot1_token,
+    ),
+    (
+        "BOT2",
+        "kazakhstan",
+        "kz",
+        "🇰🇿",
+        lambda: settings.bot2_token,
+    ),
+    (
+        "BOT3",
+        "uzbekistan",
+        "uz",
+        "🇺🇿",
+        lambda: settings.bot3_token,
+    ),
+    (
+        "BOT4",
+        "custom_4",
+        "en",
+        "BOT4",
+        lambda: settings.bot4_token,
+    ),
+    (
+        "BOT5",
+        "custom_5",
+        "en",
+        "BOT5",
+        lambda: settings.bot5_token,
+    ),
+    (
+        "BOT6",
+        "custom_6",
+        "en",
+        "BOT6",
+        lambda: settings.bot6_token,
+    ),
+]
+
+
 def get_launch_profiles() -> List[tuple[str, BotProfile]]:
     profiles: List[tuple[str, BotProfile]] = []
 
-    if settings.bot1_token:
-        profiles.append(
-            (
-                settings.bot1_token,
-                BotProfile(
-                    key="BOT1",
-                    region="belarus",
-                    default_language="ru",
-                    topic_flag="🇧🇾",
-                ),
-            )
-        )
+    for key, region, default_language, topic_flag, token_getter in _PROFILE_DEFINITIONS:
+        token = token_getter()
+        if not token:
+            continue
 
-    if settings.bot2_token:
         profiles.append(
             (
-                settings.bot2_token,
+                token,
                 BotProfile(
-                    key="BOT2",
-                    region="kazakhstan",
-                    default_language="kz",
-                    topic_flag="🇰🇿",
-                ),
-            )
-        )
-
-    if settings.bot3_token:
-        profiles.append(
-            (
-                settings.bot3_token,
-                BotProfile(
-                    key="BOT3",
-                    region="uzbekistan",
-                    default_language="uz",
-                    topic_flag="🇺🇿",
+                    key=key,
+                    region=region,
+                    default_language=default_language,
+                    topic_flag=topic_flag,
                 ),
             )
         )

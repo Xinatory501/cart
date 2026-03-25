@@ -6,9 +6,15 @@ class Settings(BaseSettings):
     BOT1_TOKEN: str = ""
     BOT2_TOKEN: str = ""
     BOT3_TOKEN: str = ""
+    BOT4_TOKEN: str = ""
+    BOT5_TOKEN: str = ""
+    BOT6_TOKEN: str = ""
     BOT1_TOKE: str = ""
     BOT2_TOKE: str = ""
     BOT3_TOKE: str = ""
+    BOT4_TOKE: str = ""
+    BOT5_TOKE: str = ""
+    BOT6_TOKE: str = ""
     SUPPORT_GROUP_ID: Optional[int] = None
 
     ADMIN_IDS: str = ""
@@ -33,6 +39,18 @@ class Settings(BaseSettings):
     @property
     def bot3_token(self) -> str:
         return (self.BOT3_TOKEN or self.BOT3_TOKE or "").strip()
+
+    @property
+    def bot4_token(self) -> str:
+        return (self.BOT4_TOKEN or self.BOT4_TOKE or "").strip()
+
+    @property
+    def bot5_token(self) -> str:
+        return (self.BOT5_TOKEN or self.BOT5_TOKE or "").strip()
+
+    @property
+    def bot6_token(self) -> str:
+        return (self.BOT6_TOKEN or self.BOT6_TOKE or "").strip()
 
     class Config:
         env_file = ".env"

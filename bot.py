@@ -38,19 +38,10 @@ async def main():
 
     await init_db()
 
-    missing_tokens: list[str] = []
     if not settings.bot1_token:
-        missing_tokens.append("BOT1_TOKEN")
-    if not settings.bot2_token:
-        missing_tokens.append("BOT2_TOKEN")
-    if not settings.bot3_token:
-        missing_tokens.append("BOT3_TOKEN")
-
-    if missing_tokens:
-        missing = ", ".join(missing_tokens)
         raise RuntimeError(
-            f"Missing bot tokens for: {missing}. "
-            "Provide all three tokens to launch 3 bots."
+            "Missing required BOT1_TOKEN. "
+            "BOT2_TOKEN to BOT6_TOKEN are optional."
         )
 
     launch_profiles = get_launch_profiles()
