@@ -26,9 +26,8 @@ async def show_training_messages(callback: CallbackQuery):
 
     for msg in messages:
         status = "✅" if msg.is_active else "❌"
-        priority_num = f"[{msg.priority}]" if msg.priority > 0 else "[0]"
-        content_preview = msg.content[:40] + "..." if len(msg.content) > 40 else msg.content
-        button_text = f"{status} {priority_num} {content_preview}"
+        content_preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
+        button_text = f"{status} {content_preview}"
         keyboard.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"view_training_{msg.id}"
@@ -58,25 +57,16 @@ async def view_training_message(callback: CallbackQuery):
             return
 
     status = "Активно ✅" if msg.is_active else "Неактивно ❌"
-    priority_info = f"{msg.priority}/5"
 
     text = (
         f"📚 <b>Обучающее сообщение #{msg.id}</b>\n\n"
-        f"<b>Статус:</b> {status}\n"
-        f"<b>Приоритет:</b> {msg.priority}/5\n\n"
+        f"<b>Статус:</b> {status}\n\n"
         f"<b>Содержание:</b>\n"
-        f"<code>{msg.content}</code>\n\n"
-        f"<i>Приоритет определяет важность инструкции:\n"
-        f"1 - слабая подсказка\n"
-        f"2 - обычная инструкция\n"
-        f"3 - важная инструкция\n"
-        f"4 - очень важная инструкция\n"
-        f"5 - критически важная инструкция</i>"
+        f"<code>{msg.content}</code>"
     )
 
     keyboard = [
         [InlineKeyboardButton(text="✏️ Изменить содержание", callback_data=f"edit_training_content_{msg_id}")],
-        [InlineKeyboardButton(text="🔢 Изменить приоритет", callback_data=f"edit_training_priority_{msg_id}")],
         [InlineKeyboardButton(text="🔄 Вкл/Выкл", callback_data=f"toggle_training_{msg_id}")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_training_{msg_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_training")]
@@ -115,7 +105,7 @@ async def save_edited_content(message: Message, state: FSMContext):
 
         if msg:
             await training_repo.delete(msg_id)
-            await training_repo.add(role="system", content=new_content, priority=msg.priority)
+            await training_repo.add(role="system", content=new_content, priority=0)
             await admin_repo.log_action(
                 message.from_user.id,
                 "edit_training_message",
@@ -124,60 +114,6 @@ async def save_edited_content(message: Message, state: FSMContext):
 
     await message.answer("✅ Содержание обновлено!")
     await state.clear()
-
-@router.callback_query(F.data.startswith("edit_training_priority_"))
-async def show_priority_selector(callback: CallbackQuery):
-    msg_id = int(callback.data.split("_")[3])
-
-    text = (
-        "🔢 <b>Выберите приоритет:</b>\n\n"
-        "1 - слабая подсказка (AI может игнорировать)\n"
-        "2 - обычная инструкция\n"
-        "3 - важная инструкция\n"
-        "4 - очень важная инструкция\n"
-        "5 - критически важная (AI всегда следует)"
-    )
-
-    keyboard = [
-        [InlineKeyboardButton(text="1", callback_data=f"set_priority_{msg_id}_1")],
-        [InlineKeyboardButton(text="2", callback_data=f"set_priority_{msg_id}_2")],
-        [InlineKeyboardButton(text="3", callback_data=f"set_priority_{msg_id}_3")],
-        [InlineKeyboardButton(text="4", callback_data=f"set_priority_{msg_id}_4")],
-        [InlineKeyboardButton(text="5", callback_data=f"set_priority_{msg_id}_5")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data=f"view_training_{msg_id}")]
-    ]
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode="HTML"
-    )
-    await callback.answer()
-
-@router.callback_query(F.data.startswith("set_priority_"))
-async def set_priority(callback: CallbackQuery):
-    parts = callback.data.split("_")
-    msg_id = int(parts[2])
-    priority = int(parts[3])
-
-    async with get_session() as session:
-        training_repo = TrainingRepository(session)
-        admin_repo = AdminRepository(session)
-
-        messages = await training_repo.get_all()
-        msg = next((m for m in messages if m.id == msg_id), None)
-
-        if msg:
-            await training_repo.delete(msg_id)
-            new_msg = await training_repo.add(role="system", content=msg.content, priority=priority)
-            await admin_repo.log_action(
-                callback.from_user.id,
-                "change_training_priority",
-                details=f"Message #{msg_id} priority set to {priority}"
-            )
-
-            await callback.answer(f"✅ Приоритет изменен на {priority}", show_alert=True)
-            await view_training_message(callback)
 
 @router.callback_query(F.data.startswith("toggle_training_"))
 async def toggle_training(callback: CallbackQuery):
@@ -259,15 +195,12 @@ async def save_training_message(message: Message, state: FSMContext):
         training_repo = TrainingRepository(session)
         admin_repo = AdminRepository(session)
 
-        await training_repo.add(role="system", content=content, priority=2)
+        await training_repo.add(role="system", content=content, priority=0)
         await admin_repo.log_action(
             message.from_user.id,
             "add_training_message",
             details=f"Added: {content[:100]}"
         )
 
-    await message.answer(
-        "✅ Обучающее сообщение добавлено с приоритетом 2!\n\n"
-        "Вы можете изменить приоритет через меню Training Messages."
-    )
+    await message.answer("✅ Обучающее сообщение добавлено!")
     await state.clear()
