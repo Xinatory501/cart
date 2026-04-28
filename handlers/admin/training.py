@@ -26,9 +26,9 @@ async def show_training_messages(callback: CallbackQuery):
 
     for msg in messages:
         status = "✅" if msg.is_active else "❌"
-        priority_stars = "⭐" * msg.priority if msg.priority > 0 else "○"
-        content_preview = msg.content[:35] + "..." if len(msg.content) > 35 else msg.content
-        button_text = f"{status} {priority_stars} {content_preview}"
+        priority_num = f"[{msg.priority}]" if msg.priority > 0 else "[0]"
+        content_preview = msg.content[:40] + "..." if len(msg.content) > 40 else msg.content
+        button_text = f"{status} {priority_num} {content_preview}"
         keyboard.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"view_training_{msg.id}"
@@ -63,15 +63,15 @@ async def view_training_message(callback: CallbackQuery):
     text = (
         f"📚 <b>Обучающее сообщение #{msg.id}</b>\n\n"
         f"<b>Статус:</b> {status}\n"
-        f"<b>Приоритет:</b> {priority_info}\n\n"
+        f"<b>Приоритет:</b> {msg.priority}/5\n\n"
         f"<b>Содержание:</b>\n"
         f"<code>{msg.content}</code>\n\n"
         f"<i>Приоритет определяет важность инструкции:\n"
-        f"1 ⭐ - слабая подсказка\n"
-        f"2 ⭐⭐ - обычная инструкция\n"
-        f"3 ⭐⭐⭐ - важная инструкция\n"
-        f"4 ⭐⭐⭐⭐ - очень важная инструкция\n"
-        f"5 ⭐⭐⭐⭐⭐ - критически важная инструкция</i>"
+        f"1 - слабая подсказка\n"
+        f"2 - обычная инструкция\n"
+        f"3 - важная инструкция\n"
+        f"4 - очень важная инструкция\n"
+        f"5 - критически важная инструкция</i>"
     )
 
     keyboard = [
@@ -131,19 +131,19 @@ async def show_priority_selector(callback: CallbackQuery):
 
     text = (
         "🔢 <b>Выберите приоритет:</b>\n\n"
-        "1 ⭐ - слабая подсказка (AI может игнорировать)\n"
-        "2 ⭐⭐ - обычная инструкция\n"
-        "3 ⭐⭐⭐ - важная инструкция\n"
-        "4 ⭐⭐⭐⭐ - очень важная инструкция\n"
-        "5 ⭐⭐⭐⭐⭐ - критически важная (AI всегда следует)"
+        "1 - слабая подсказка (AI может игнорировать)\n"
+        "2 - обычная инструкция\n"
+        "3 - важная инструкция\n"
+        "4 - очень важная инструкция\n"
+        "5 - критически важная (AI всегда следует)"
     )
 
     keyboard = [
-        [InlineKeyboardButton(text="1 ⭐", callback_data=f"set_priority_{msg_id}_1")],
-        [InlineKeyboardButton(text="2 ⭐⭐", callback_data=f"set_priority_{msg_id}_2")],
-        [InlineKeyboardButton(text="3 ⭐⭐⭐", callback_data=f"set_priority_{msg_id}_3")],
-        [InlineKeyboardButton(text="4 ⭐⭐⭐⭐", callback_data=f"set_priority_{msg_id}_4")],
-        [InlineKeyboardButton(text="5 ⭐⭐⭐⭐⭐", callback_data=f"set_priority_{msg_id}_5")],
+        [InlineKeyboardButton(text="1", callback_data=f"set_priority_{msg_id}_1")],
+        [InlineKeyboardButton(text="2", callback_data=f"set_priority_{msg_id}_2")],
+        [InlineKeyboardButton(text="3", callback_data=f"set_priority_{msg_id}_3")],
+        [InlineKeyboardButton(text="4", callback_data=f"set_priority_{msg_id}_4")],
+        [InlineKeyboardButton(text="5", callback_data=f"set_priority_{msg_id}_5")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data=f"view_training_{msg_id}")]
     ]
 
