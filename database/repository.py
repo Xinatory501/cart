@@ -1041,3 +1041,72 @@ class PendingRequestRepository:
             delete(PendingRequest).where(PendingRequest.id == request_id)
         )
         await self.session.commit()
+
+class ClarificationRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(
+        self,
+        user_id: int,
+        session_id: int,
+        original_question: str,
+        clarification_question: str,
+        options: Optional[str] = None
+    ):
+        from database.models import ClarificationContext
+
+        await self.session.execute(
+            update(ClarificationContext)
+            .where(and_(
+                ClarificationContext.user_id == user_id,
+                ClarificationContext.is_active == True
+            ))
+            .values(is_active=False)
+        )
+
+        context = ClarificationContext(
+            user_id=user_id,
+            session_id=session_id,
+            original_question=original_question,
+            clarification_question=clarification_question,
+            options=options,
+            is_active=True
+        )
+        self.session.add(context)
+        await self.session.commit()
+        await self.session.refresh(context)
+        return context
+
+    async def get_active(self, user_id: int):
+        from database.models import ClarificationContext
+        result = await self.session.execute(
+            select(ClarificationContext)
+            .where(and_(
+                ClarificationContext.user_id == user_id,
+                ClarificationContext.is_active == True
+            ))
+            .order_by(ClarificationContext.created_at.desc())
+        )
+        return result.scalar_one_or_none()
+
+    async def mark_answered(self, context_id: int):
+        from database.models import ClarificationContext
+        await self.session.execute(
+            update(ClarificationContext)
+            .where(ClarificationContext.id == context_id)
+            .values(is_active=False, answered_at=datetime.utcnow())
+        )
+        await self.session.commit()
+
+    async def deactivate_all(self, user_id: int):
+        from database.models import ClarificationContext
+        await self.session.execute(
+            update(ClarificationContext)
+            .where(and_(
+                ClarificationContext.user_id == user_id,
+                ClarificationContext.is_active == True
+            ))
+            .values(is_active=False)
+        )
+        await self.session.commit()

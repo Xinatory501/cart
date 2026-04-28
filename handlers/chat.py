@@ -12,6 +12,7 @@ from config import settings
 from database.database import get_session
 from database.repository import (
     ChatRepository,
+    ClarificationRepository,
     PendingRequestRepository,
     TrainingRepository,
     UserRepository,
@@ -261,6 +262,30 @@ async def handle_chat_message(message: Message, state: FSMContext):
         await message.answer(off_topic_text)
         return
 
+    if "need_clarification" in lowered:
+        clean_clarification = (
+            response_text
+            .replace("need_clarification", "")
+            .replace("NEED_CLARIFICATION", "")
+            .strip()
+        )
+
+        if clean_clarification:
+            async with get_session() as session:
+                clarification_repo = ClarificationRepository(session)
+                await clarification_repo.create(
+                    user_id=user_id,
+                    session_id=active_session_id,
+                    original_question=user_message,
+                    clarification_question=clean_clarification
+                )
+
+            await state.set_state(UserStates.waiting_clarification)
+            html_clarification = markdown_to_html(clean_clarification)
+            await message.answer(html_clarification, parse_mode="HTML")
+            await _mark_pending(pending_request_id, failed=False)
+            return
+
     clean_text = (
         response_text
         .replace("ignore_offtopic", "")
@@ -341,6 +366,196 @@ async def handle_chat_message(message: Message, state: FSMContext):
         )
 
     await _mark_pending(pending_request_id, failed=False)
+
+
+@router.message(UserStates.waiting_clarification, F.text)
+async def handle_clarification_answer(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user_answer = (message.text or "").strip()
+
+    if not user_answer:
+        return
+
+    language = "en"
+    username = None
+    first_name = None
+    thread_id = None
+    active_session_id = None
+
+    thread_service = ThreadService(message.bot)
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        chat_repo = ChatRepository(session)
+        clarification_repo = ClarificationRepository(session)
+
+        user = await user_repo.get_by_id(user_id)
+        if not user:
+            return
+
+        language = user.language
+        username = user.username
+        first_name = user.first_name
+        thread_id = user.thread_id
+
+        clarification_context = await clarification_repo.get_active(user_id)
+        if not clarification_context:
+            await state.set_state(UserStates.chatting)
+            await message.answer(get_text("no_active_session", language))
+            return
+
+        original_question = clarification_context.original_question
+        await clarification_repo.mark_answered(clarification_context.id)
+
+        active_session = await chat_repo.get_active_session(user_id)
+        if not active_session:
+            await state.set_state(UserStates.chatting)
+            await message.answer(get_text("no_active_session", language))
+            return
+
+        active_session_id = active_session.id
+
+        combined_question = f"{original_question}\n\nУточнение: {user_answer}"
+
+        await chat_repo.add_message(
+            user_id=user_id,
+            role="user",
+            content=combined_question,
+            message_id=message.message_id,
+            is_ai_handled=True,
+        )
+
+        history = await chat_repo.get_session_history(active_session_id, limit=40)
+        messages = [
+            {"role": item.role, "content": item.content}
+            for item in history
+            if item.role in {"user", "assistant"}
+        ]
+        messages = _trim_history(messages)
+
+    ai_service = await AIService.get_service()
+    if not ai_service:
+        await thread_service.send_log_message(
+            f"AI service unavailable. user_id={user_id}"
+        )
+        await state.set_state(UserStates.chatting)
+        await message.answer(
+            get_text("error_try_later", language),
+            reply_markup=get_try_ai_again_keyboard(language),
+        )
+        return
+
+    async with get_session() as session:
+        training_repo = TrainingRepository(session)
+        system_prompt = await ai_service.get_system_prompt(training_repo, language)
+
+    response_parts: List[str] = []
+    stream_error: Exception | None = None
+    try:
+        async for chunk in ai_service.get_response_stream(
+            messages=messages,
+            system_prompt=system_prompt,
+            user_id=user_id,
+            thread_id=thread_id,
+            bot=message.bot,
+        ):
+            response_parts.append(chunk)
+    except Exception as error:
+        stream_error = error
+        logger.error("AI stream crashed for user %s: %s", user_id, error)
+
+    response_text = "".join(response_parts).strip()
+    if not response_text:
+        await thread_service.send_log_message(
+            f"Empty AI response after clarification. user_id={user_id} error={stream_error}"
+        )
+        await state.set_state(UserStates.chatting)
+        await message.answer(get_text("error_try_later", language))
+        return
+
+    clean_text = (
+        response_text
+        .replace("ignore_offtopic", "")
+        .replace("IGNORE_OFFTOPIC", "")
+        .replace("call_people", "")
+        .replace("CALL_PEOPLE", "")
+        .replace("need_clarification", "")
+        .replace("NEED_CLARIFICATION", "")
+        .strip()
+    )
+
+    if not clean_text:
+        await thread_service.send_log_message(
+            f"AI response empty after cleaning. user_id={user_id}"
+        )
+        await state.set_state(UserStates.chatting)
+        await message.answer(get_text("error_try_later", language))
+        return
+
+    async with get_session() as session:
+        chat_repo = ChatRepository(session)
+
+        lowered = response_text.lower()
+        if "call_people" in lowered:
+            await chat_repo.deactivate_ai(user_id)
+
+            html_response = markdown_to_html(clean_text)
+            await message.answer(html_response, parse_mode="HTML")
+            await message.answer(get_text("human_called", language), parse_mode="HTML")
+
+            await chat_repo.add_message(
+                user_id=user_id,
+                role="assistant",
+                content=clean_text,
+            )
+
+            if settings.SUPPORT_GROUP_ID:
+                await thread_service.notify_human_needed(
+                    user_id=user_id,
+                    username=username,
+                    first_name=first_name,
+                )
+                await thread_service.send_user_message(
+                    user_id=user_id,
+                    text=combined_question,
+                    username=username,
+                    first_name=first_name,
+                )
+                await thread_service.send_ai_message(
+                    user_id=user_id,
+                    text=clean_text,
+                    username=username,
+                    first_name=first_name,
+                )
+
+            await state.set_state(UserStates.chatting)
+            return
+
+        html_response = markdown_to_html(clean_text)
+        response_msg = await message.answer(html_response, parse_mode="HTML")
+
+        await chat_repo.add_message(
+            user_id=user_id,
+            role="assistant",
+            content=clean_text,
+            message_id=response_msg.message_id,
+        )
+
+    if settings.SUPPORT_GROUP_ID:
+        await thread_service.send_user_message(
+            user_id=user_id,
+            text=combined_question,
+            username=username,
+            first_name=first_name,
+        )
+        await thread_service.send_ai_message(
+            user_id=user_id,
+            text=clean_text,
+            username=username,
+            first_name=first_name,
+        )
+
+    await state.set_state(UserStates.chatting)
 
 
 @router.message(UserStates.chatting)

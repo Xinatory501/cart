@@ -11,6 +11,7 @@ class AdminStates(StatesGroup):
 
     entering_training_message = State()
     entering_training_priority = State()
+    editing_training_content = State()
 
     entering_user_id = State()
     viewing_user_info = State()
@@ -33,3 +34,4 @@ class AdminStates(StatesGroup):
     entering_remote_provider_api_key = State()
     entering_remote_provider_model = State()
     entering_support_group_id = State()
+    uploading_backup = State()

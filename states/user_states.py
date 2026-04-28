@@ -10,3 +10,5 @@ class UserStates(StatesGroup):
     waiting_support = State()
 
     in_settings = State()
+
+    waiting_clarification = State()

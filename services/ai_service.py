@@ -458,10 +458,15 @@ class AIService:
             "- Keep responses concise, clear, and factual.\n"
             "- If question is not about CartaMe service/support/cards/qr, answer exactly: ignore_offtopic\n"
             "- If issue requires human support and cannot be solved safely, append token call_people\n"
+            "- If question is ambiguous and has multiple interpretations, ask clarification question and append token need_clarification\n"
             "\nClarifications:\n"
             "- Treat mentions of cards, discount/loyalty cards, QR codes, barcodes, and related terms as on-topic.\n"
             "- Treat these as CartaMe mentions too: CaraMe, Kartame, Carta Me (common misspellings).\n"
             "- For Russian/Kazakh/Uzbek: words like карта/карты/картами/скидка/дисконт/штрихкод/QR are on-topic.\n"
+            "\nAmbiguous questions examples:\n"
+            "- 'как добавить карту' - could mean bank card or loyalty card - ask which type\n"
+            "- 'не работает' - ask what exactly is not working\n"
+            "- 'ошибка' - ask what error message they see\n"
         )
 
         for message in training_messages:
