@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  cartame-bot:
+    build: .
+    container_name: cartame_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8080:8080"
+    networks:
+      - cartame-network
+
+networks:
+  cartame-network:
+    driver: bridge
