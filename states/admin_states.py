@@ -37,3 +37,9 @@ class AdminStates(StatesGroup):
     entering_support_group_id = State()
     uploading_backup = State()
     entering_welcome_sticker = State()
+    entering_photo_channel_id = State()
+
+    # Working hours
+    entering_work_schedule = State()
+    entering_work_holiday = State()
+    entering_work_timezone = State()

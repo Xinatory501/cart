@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from config import settings
 from database.database import get_session
@@ -21,6 +21,7 @@ from locales.loader import get_text
 from services.ai_service import AIService
 from services.bot_profile_service import set_user_bot_key
 from services.thread_service import ThreadService
+from services.working_hours_service import get_next_shift_info, is_operator_available
 from states.user_states import UserStates
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,51 @@ async def _handle_human_request(
     active_session_id: int,
     user_message: str,
 ) -> None:
+    # ── Working hours check ──────────────────────────────────────────
+    if not await is_operator_available():
+        next_shift = await get_next_shift_info(user.language)
+        offline_text = get_text("operator_offline", user.language, next_shift=next_shift)
+        reactivate_btn = get_text("reactivate_ai", user.language)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=reactivate_btn, callback_data="reactivate_ai")]
+            ]
+        )
+        # Still deactivate AI and register the request so operator sees it
+        async with get_session() as session:
+            chat_repo = ChatRepository(session)
+            await chat_repo.deactivate_ai(user.id)
+            await chat_repo.add_message(
+                user_id=user.id,
+                role="user",
+                content=user_message,
+                message_id=message.message_id,
+                is_ai_handled=False,
+            )
+        await state.set_state(UserStates.chatting)
+        await message.answer(offline_text, parse_mode="HTML", reply_markup=kb)
+        # Still notify support group so operators see it when they come online
+        if settings.SUPPORT_GROUP_ID:
+            await thread_service.notify_human_needed(
+                user_id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+            )
+            await thread_service.send_user_message(
+                user_id=user.id,
+                text=user_message,
+                username=user.username,
+                first_name=user.first_name,
+                user_language=user.language,
+            )
+        logger.info(
+            "chat.human_request.offline user_id=%s session_id=%s",
+            user.id,
+            active_session_id,
+        )
+        return
+    # ────────────────────────────────────────────────────────────────
+
     async with get_session() as session:
         chat_repo = ChatRepository(session)
         await chat_repo.deactivate_ai(user.id)
@@ -168,6 +214,7 @@ async def _handle_human_request(
             text=user_message,
             username=user.username,
             first_name=user.first_name,
+            user_language=user.language,
         )
 
     logger.info(
@@ -276,6 +323,7 @@ async def _process_ai_response(
                 text=source_text,
                 username=user.username,
                 first_name=user.first_name,
+                user_language=user.language,
             )
             await thread_service.send_ai_message(
                 user_id=user.id,
@@ -330,6 +378,51 @@ async def _process_ai_response(
         return
 
     if "call_people" in lowered:
+        # ── Working hours check ──────────────────────────────────────
+        if not await is_operator_available():
+            next_shift = await get_next_shift_info(user.language)
+            offline_text = get_text("operator_offline", user.language, next_shift=next_shift)
+            reactivate_btn = get_text("reactivate_ai", user.language)
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text=reactivate_btn, callback_data="reactivate_ai")]
+                ]
+            )
+            # Deactivate AI, register in support group, show offline notice
+            async with get_session() as session:
+                chat_repo = ChatRepository(session)
+                await chat_repo.deactivate_ai(user.id)
+                await chat_repo.add_message(user.id, "assistant", clean_text)
+
+            await message.answer(markdown_to_html(clean_text), parse_mode="HTML")
+            await message.answer(offline_text, parse_mode="HTML", reply_markup=kb)
+
+            if settings.SUPPORT_GROUP_ID:
+                await thread_service.notify_human_needed(
+                    user_id=user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                )
+                await thread_service.send_user_message(
+                    user_id=user.id,
+                    text=source_text,
+                    username=user.username,
+                    first_name=user.first_name,
+                    user_language=user.language,
+                )
+                await thread_service.send_ai_message(
+                    user_id=user.id,
+                    text=clean_text,
+                    username=user.username,
+                    first_name=user.first_name,
+                )
+
+            await _mark_pending(pending_request_id, failed=False)
+            await state.set_state(UserStates.chatting)
+            logger.info("chat.call_people.offline user_id=%s pending_id=%s", user.id, pending_request_id)
+            return
+        # ────────────────────────────────────────────────────────────
+
         async with get_session() as session:
             chat_repo = ChatRepository(session)
             await chat_repo.deactivate_ai(user.id)
@@ -349,6 +442,7 @@ async def _process_ai_response(
                 text=source_text,
                 username=user.username,
                 first_name=user.first_name,
+                user_language=user.language,
             )
             await thread_service.send_ai_message(
                 user_id=user.id,
@@ -378,6 +472,7 @@ async def _process_ai_response(
             text=source_text,
             username=user.username,
             first_name=user.first_name,
+            user_language=user.language,
         )
         await thread_service.send_ai_message(
             user_id=user.id,
@@ -436,6 +531,7 @@ async def _handle_regular_chat(message: Message, state: FSMContext, user, active
                 text=user_message,
                 username=user.username,
                 first_name=user.first_name,
+                user_language=user.language,
             )
         logger.info("chat.regular.ai_inactive user_id=%s session_id=%s", user.id, active_session.id)
         return
@@ -604,3 +700,26 @@ async def try_ai_again(callback: CallbackQuery):
         return
 
     await callback.answer("AI is still unavailable. Try later.", show_alert=True)
+
+
+@router.callback_query(F.data == "reactivate_ai")
+async def reactivate_ai_callback(callback: CallbackQuery, state: FSMContext):
+    """User pressed 'Return to AI' after offline operator message."""
+    user_id = callback.from_user.id
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        chat_repo = ChatRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        if not user:
+            await callback.answer("Сессия не найдена.", show_alert=True)
+            return
+        await chat_repo.activate_ai(user_id)
+
+    language = user.language
+    ai_activated_text = get_text("ai_activated", language)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(ai_activated_text, parse_mode="HTML")
+    await state.set_state(UserStates.chatting)
+    await callback.answer()
+    logger.info("chat.reactivate_ai user_id=%s", user_id)

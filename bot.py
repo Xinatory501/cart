@@ -19,6 +19,7 @@ from handlers.admin import (
     reports,
     training,
     user_management,
+    working_hours,
 )
 from handlers.group import support
 from middlewares.antiflood import AntiFloodMiddleware
@@ -90,6 +91,7 @@ async def main():
     dp.include_router(training.router)
     dp.include_router(database_backup.router)
     dp.include_router(reports.router)
+    dp.include_router(working_hours.router)
 
     dp.include_router(support.router)
 
@@ -106,7 +108,7 @@ async def main():
     from aiohttp import web
     from services.api_service import create_app
     
-    app = create_app()
+    app = create_app(bots[0])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8080)

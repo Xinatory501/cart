@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -145,7 +145,9 @@ class AIService:
             api_key=api_key or "local-no-auth",
             base_url=base_url,
             default_headers=headers or None,
+            timeout=20.0,
         )
+
 
     @staticmethod
     async def _ordered_providers(
@@ -378,6 +380,7 @@ class AIService:
                 temperature=0.7,
                 max_tokens=1024,
                 stream=True,
+                timeout=20.0,
             )
 
         yielded = False
@@ -398,6 +401,7 @@ class AIService:
                 messages=full_messages,
                 temperature=0.7,
                 max_tokens=1024,
+                timeout=20.0,
             )
 
         text = completion.choices[0].message.content or ""

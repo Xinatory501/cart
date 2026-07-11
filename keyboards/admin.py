@@ -14,9 +14,13 @@ def get_admin_menu_keyboard(language: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📥 Экспорт чатов & API", callback_data="admin_chats_export")],
         [InlineKeyboardButton(text="📊 Отчеты", callback_data="admin_reports")],
         [InlineKeyboardButton(text="🖼️ Приветственный стикер", callback_data="admin_welcome_sticker")],
+        [InlineKeyboardButton(text="💾 Хранилище фото", callback_data="admin_photo_storage")],
+        [InlineKeyboardButton(text="🕐 Время работы операторов", callback_data="admin_working_hours")],
+        [InlineKeyboardButton(text="🌐 Режим перевода ответов", callback_data="admin_toggle_translation")],
         [InlineKeyboardButton(text="🏠 Назад в меню", callback_data="menu_back")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 
 def get_user_actions_keyboard(language: str, user_id: int, is_banned: bool, is_admin: bool) -> InlineKeyboardMarkup:

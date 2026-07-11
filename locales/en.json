@@ -56,5 +56,7 @@
   "get_ticket_number": "Get ticket number",
   "your_ticket_number": "🎫 Your dialog number: <code>{ticket_number}</code>",
   "get_ticket_number_hint": "You entered the chat. Use the button below to get the ticket number.",
-  "menu_helper": "Use menu to navigate."
+  "menu_helper": "Use menu to navigate.",
+  "operator_offline": "🕐 Support specialists are currently offline, so we can't connect you to an operator right now.\n\nPlease leave your Loyalty ID or phone number and describe your issue in detail. Your request will be registered and forwarded to an operator at the start of the next shift ({next_shift}).",
+  "reactivate_ai": "🤖 Return to AI"
 }

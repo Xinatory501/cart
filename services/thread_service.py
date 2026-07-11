@@ -7,7 +7,7 @@ from typing import Optional
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 
 from config import settings
@@ -718,7 +718,43 @@ class ThreadService:
         text: str,
         username: Optional[str] = None,
         first_name: Optional[str] = None,
+        user_language: str = "ru",
     ) -> bool:
+        display_text = text
+        if user_language and user_language != "ru":
+            try:
+                from services.translation_service import translate_text
+                ru_translation = await translate_text(text, "ru")
+                if ru_translation:
+                    safe_original = self._escape(text)
+                    safe_translation = self._escape(ru_translation)
+                    # Combine original + translation into single block (pre-escaped)
+                    # We'll pass a sentinel so _send_message skips escaping.
+                    # Instead, build full_text here and use the raw send path.
+                    thread_id = await self.ensure_thread_for_user(
+                        user_id=user_id, username=username, first_name=first_name
+                    )
+                    if thread_id and await self.is_thread_owned_by_current_bot(thread_id):
+                        keyboard = self._build_user_keyboard(user_id)
+                        combined = (
+                            f"<b>Пользователь:</b>\n{safe_original}\n\n"
+                            f"<i>🌐 Перевод для оператора:\n{safe_translation}</i>"
+                        )
+                        try:
+                            await self.bot.send_message(
+                                chat_id=self.support_group_id,
+                                message_thread_id=thread_id,
+                                text=combined,
+                                parse_mode="HTML",
+                                reply_markup=keyboard,
+                            )
+                            return True
+                        except Exception as err:
+                            logger.warning("send_user_message translation send error: %s", err)
+                    # Fall through to normal send if translation path failed
+            except Exception as exc:
+                logger.warning("send_user_message translation error: %s", exc)
+
         return await self._send_message(
             user_id=user_id,
             text=text,
@@ -728,6 +764,7 @@ class ThreadService:
             from_user=True,
         )
 
+
     async def send_ai_message(
         self,
         user_id: int,
@@ -735,6 +772,45 @@ class ThreadService:
         username: Optional[str] = None,
         first_name: Optional[str] = None,
     ) -> bool:
+        # Determine user language
+        user_language = "ru"
+        try:
+            async with get_session() as session:
+                user_repo = UserRepository(session)
+                user = await user_repo.get_by_id(user_id)
+                if user:
+                    user_language = user.language
+        except Exception as e:
+            logger.warning("Failed to query user language in send_ai_message: %s", e)
+
+        if user_language and user_language != "ru":
+            try:
+                from services.translation_service import translate_text
+                ru_translation = await translate_text(text, "ru")
+                if ru_translation:
+                    safe_original = self._escape(text)
+                    safe_translation = self._escape(ru_translation)
+                    thread_id = await self.ensure_thread_for_user(
+                        user_id=user_id, username=username, first_name=first_name
+                    )
+                    if thread_id and await self.is_thread_owned_by_current_bot(thread_id):
+                        combined = (
+                            f"<b>AI ответ:</b>\n{safe_original}\n\n"
+                            f"<i>🌐 Перевод для оператора:\n{safe_translation}</i>"
+                        )
+                        try:
+                            await self.bot.send_message(
+                                chat_id=self.support_group_id,
+                                message_thread_id=thread_id,
+                                text=combined,
+                                parse_mode="HTML",
+                            )
+                            return True
+                        except Exception as err:
+                            logger.warning("send_ai_message translation send error: %s", err)
+            except Exception as exc:
+                logger.warning("send_ai_message translation error: %s", exc)
+
         return await self._send_message(
             user_id=user_id,
             text=text,
@@ -743,6 +819,7 @@ class ThreadService:
             first_name=first_name,
             from_user=False,
         )
+
 
     async def send_system_message(
         self,
@@ -778,6 +855,131 @@ class ThreadService:
             first_name=first_name,
             from_user=False,
         )
+
+    async def send_user_photo(
+        self,
+        user_id: int,
+        photo_bytes: bytes,
+        filename: str,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+    ) -> Optional[Message]:
+        if not self._is_support_group_configured():
+            logger.warning("SUPPORT_GROUP_ID is not configured; skipping photo")
+            return None
+
+        thread_id = await self.ensure_thread_for_user(
+            user_id=user_id,
+            username=username,
+            first_name=first_name,
+        )
+
+        if not thread_id:
+            logger.warning("Thread ID is missing for user %s", user_id)
+            return None
+
+        if not await self.is_thread_owned_by_current_bot(thread_id):
+            return None
+
+        from aiogram.types import BufferedInputFile
+        input_file = BufferedInputFile(photo_bytes, filename=filename)
+        keyboard = self._build_user_keyboard(user_id)
+
+        try:
+            target = settings.PHOTO_STORAGE_TARGET or "topic"
+            channel_id = settings.PHOTO_STORAGE_CHANNEL_ID
+
+            if target == "channel" and channel_id:
+                msg = await self.bot.send_photo(
+                    chat_id=channel_id,
+                    photo=input_file,
+                    caption=f"📝 Фото пользователя {user_id}",
+                )
+                file_id = msg.photo[-1].file_id
+
+                try:
+                    await self.bot.send_photo(
+                        chat_id=self.support_group_id,
+                        message_thread_id=thread_id,
+                        photo=file_id,
+                        caption=f"<b>Пользователь:</b>\n[Прикрепил фото]",
+                        parse_mode="HTML",
+                        reply_markup=keyboard,
+                    )
+                except TelegramAPIError as thread_err:
+                    logger.warning("Failed to send copy to support thread: %s", thread_err)
+                return msg
+            else:
+                msg = await self.bot.send_photo(
+                    chat_id=self.support_group_id,
+                    message_thread_id=thread_id,
+                    photo=input_file,
+                    caption=f"<b>Пользователь:</b>\n[Прикрепил фото]",
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+                return msg
+        except TelegramAPIError as error:
+            logger.warning("Failed to send photo: %s", error)
+            return None
+
+    async def get_or_create_rating_thread(self) -> Optional[int]:
+        if not self._is_support_group_configured():
+            return None
+            
+        key = f"support_rating_thread_id:{self.profile.key}"
+        async with get_session() as session:
+            config_repo = ConfigRepository(session)
+            thread_id_str = await config_repo.get(key)
+            if thread_id_str:
+                return int(thread_id_str)
+
+        try:
+            forum_topic = await self.bot.create_forum_topic(
+                chat_id=self.support_group_id,
+                name="Оценка",
+            )
+            thread_id = forum_topic.message_thread_id
+            
+            async with get_session() as session:
+                config_repo = ConfigRepository(session)
+                await config_repo.set(key, str(thread_id))
+                
+            return thread_id
+        except Exception as error:
+            logger.error("Failed to create 'Оценка' forum topic: %s", error)
+            return None
+
+    async def send_rating_log(self, user_id: int, ticket_number: str, operator_name: str, stars: int) -> bool:
+        rating_thread_id = await self.get_or_create_rating_thread()
+        if not rating_thread_id:
+            logger.warning("Could not obtain rating thread ID")
+            return False
+            
+        star_emojis = "⭐️" * stars
+        log_text = (
+            "<b>📊 Новая оценка поддержки</b>\n\n"
+            f"<b>Обращение:</b> #{ticket_number}\n"
+            f"<b>Кому поставлена оценка:</b> {operator_name}\n"
+            f"<b>Оценка:</b> {stars} / 5 {star_emojis}\n"
+            f"<b>User ID:</b> <code>{user_id}</code>"
+        )
+        
+        try:
+            await self.bot.send_message(
+                chat_id=self.support_group_id,
+                message_thread_id=rating_thread_id,
+                text=log_text,
+                parse_mode="HTML"
+            )
+            return True
+        except TelegramAPIError as error:
+            logger.warning("Failed to send rating message to 'Оценка' thread %s: %s", rating_thread_id, error)
+            key = f"support_rating_thread_id:{self.profile.key}"
+            async with get_session() as session:
+                config_repo = ConfigRepository(session)
+                await config_repo.delete(key)
+            return False
 
     async def _notify_admins_about_permissions(
         self,

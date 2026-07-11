@@ -18,6 +18,7 @@ class User(Base):
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     ban_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     thread_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fingerprint: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -53,6 +54,7 @@ class ChatHistory(Base):
     message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    operator_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     session_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("chat_sessions.id"), nullable=True
     )

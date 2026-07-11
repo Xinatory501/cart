@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     BOT5_TOKE: str = ""
     BOT6_TOKE: str = ""
     SUPPORT_GROUP_ID: Optional[int] = None
+    PHOTO_STORAGE_TARGET: str = "topic"
+    PHOTO_STORAGE_CHANNEL_ID: Optional[int] = None
 
     ADMIN_IDS: str = ""
 

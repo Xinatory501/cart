@@ -36,18 +36,28 @@ class UserRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_fingerprint(self, fingerprint: str) -> Optional[User]:
+        if not fingerprint:
+            return None
+        result = await self.session.execute(
+            select(User).where(User.fingerprint == fingerprint)
+        )
+        return result.scalar_one_or_none()
+
     async def create(
         self,
         user_id: int,
         username: Optional[str],
         first_name: Optional[str],
-        last_name: Optional[str]
+        last_name: Optional[str],
+        fingerprint: Optional[str] = None
     ) -> User:
         user = User(
             id=user_id,
             username=username,
             first_name=first_name,
-            last_name=last_name
+            last_name=last_name,
+            fingerprint=fingerprint
         )
         self.session.add(user)
         await self.session.commit()
@@ -266,7 +276,8 @@ class ChatRepository:
         role: str,
         content: str,
         message_id: Optional[int] = None,
-        is_ai_handled: bool = True
+        is_ai_handled: bool = True,
+        operator_name: Optional[str] = None
     ) -> ChatHistory:
         session = await self.get_active_session(user_id)
         session_id = session.id if session else None
@@ -277,7 +288,8 @@ class ChatRepository:
             role=role,
             content=content,
             session_id=session_id,
-            is_ai_handled=is_ai_handled
+            is_ai_handled=is_ai_handled,
+            operator_name=operator_name
         )
         self.session.add(msg)
         await self.session.commit()

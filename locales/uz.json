@@ -56,5 +56,7 @@
   "get_ticket_number": "Muloqot raqamini bilish",
   "your_ticket_number": "🎫 Muloqot raqamingiz: <code>{ticket_number}</code>",
   "get_ticket_number_hint": "Siz chatga kirdingiz. Muloqot raqamini bilish uchun quyidagi tugmadan foydalaning.",
-  "menu_helper": "Navigatsiya uchun menyudan foydalaning."
+  "menu_helper": "Navigatsiya uchun menyudan foydalaning.",
+  "operator_offline": "🕐 Hozirda qo'llab-quvvatlash mutaxassislari ishlamayapti, shuning uchun operatorni ulash imkonsiz.\n\nLoyalty ID yoki telefon raqamingizni va muammoingizni batafsil yozing. Murojaatingiz ro'yxatga olinadi va keyingi ish smenasi boshida operatorga uzatiladi ({next_shift}).",
+  "reactivate_ai": "🤖 AI ga qaytish"
 }
