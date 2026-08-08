@@ -40,6 +40,20 @@ services:
     networks:
       - cartame-network
 
+  cartame-nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: cartame_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - cartame-bot
+    networks:
+      - cartame-network
+
   # postgres:
   #   image: postgres:16-alpine
   #   environment:

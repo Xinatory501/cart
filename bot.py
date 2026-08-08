@@ -118,6 +118,11 @@ async def main():
     retention_service = RetentionService()
     task_registry.register(retention_service.start(), "retention_service")
 
+    # WEB API Server (WEB-05, WEB-06, WEB-07, WEB-09)
+    from services.web_server import WebApiServer
+    web_server = WebApiServer(host="0.0.0.0", port=8080)
+    task_registry.register(web_server.start(), "web_api_server")
+
     try:
         await dp.start_polling(*bots, allowed_updates=dp.resolve_used_update_types())
     finally:
