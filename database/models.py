@@ -69,6 +69,7 @@ class TrainingMessage(Base):
     effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     effective_to: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     superseded_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    vector_embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # AI-09: JSON serialized list of floats
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

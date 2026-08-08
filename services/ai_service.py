@@ -91,6 +91,27 @@ class AIService:
         self.model = model
         self.client = self._create_client()
 
+    async def generate_embedding(self, text: str) -> List[float]:
+        """AI-09: Generate vector embedding for a given text using the configured AI client."""
+        provider_name = (self.provider.name or "").lower()
+        
+        # Default embedding model
+        model_name = "text-embedding-3-small"
+        if provider_name == "openrouter":
+            model_name = "openai/text-embedding-3-small"
+        elif provider_name == "groq":
+            model_name = "nomic-embed-text-v1.5"
+            
+        try:
+            response = await self.client.embeddings.create(
+                input=[text],
+                model=model_name
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error("Failed to generate embedding via %s: %s. Using fallback zero-vector.", provider_name, e)
+            return [0.0] * 1536
+
     @staticmethod
     def _is_local_provider(provider: AIProvider) -> bool:
         provider_name = (provider.name or "").lower()

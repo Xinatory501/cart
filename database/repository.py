@@ -265,7 +265,10 @@ class TrainingRepository:
         return list(result.scalars().all())
 
     async def search_relevant(self, query: str, limit: int = 5) -> List[TrainingMessage]:
-        """AI-09: Find most relevant KB entries for user query by keyword matching."""
+        """AI-09: Find most relevant KB entries using vector similarity (RAG) with keyword fallback."""
+        import json
+        import math
+        
         # Get all approved entries
         result = await self.session.execute(
             select(TrainingMessage)
@@ -275,14 +278,72 @@ class TrainingRepository:
         
         if not all_msgs:
             return []
-        
+
+        # Try generating embedding for the query
+        query_vector = None
+        ai_service = None
+        try:
+            from services.ai_service import AIService
+            ai_service = await AIService.get_service()
+            if ai_service:
+                query_vector = await ai_service.generate_embedding(query)
+                # Check if it returned a zero-vector fallback
+                if all(v == 0.0 for v in query_vector):
+                    query_vector = None
+        except Exception as e:
+            logger.error("RAG search failed to get AI service/vector: %s. Falling back to keyword search.", e)
+
+        # 1. VECTOR SIMILARITY PATH
+        if query_vector:
+            scored = []
+            for msg in all_msgs:
+                msg_vector = None
+                
+                # Check cache in DB
+                if msg.vector_embedding:
+                    try:
+                        msg_vector = json.loads(msg.vector_embedding)
+                    except Exception:
+                        msg_vector = None
+                        
+                # Generate and cache if missing
+                if not msg_vector and ai_service:
+                    try:
+                        msg_vector = await ai_service.generate_embedding(msg.content or "")
+                        # Save embedding back to database
+                        msg.vector_embedding = json.dumps(msg_vector)
+                        self.session.add(msg)
+                        await self.session.commit()
+                    except Exception as e:
+                        logger.error("Failed to generate and cache embedding for msg %d: %s", msg.id, e)
+                        msg_vector = None
+                
+                if msg_vector:
+                    # Calculate cosine similarity
+                    dot_product = sum(a * b for a, b in zip(query_vector, msg_vector))
+                    norm_q = math.sqrt(sum(q * q for q in query_vector))
+                    norm_m = math.sqrt(sum(m * m for m in msg_vector))
+                    
+                    similarity = 0.0
+                    if norm_q > 0 and norm_m > 0:
+                        similarity = dot_product / (norm_q * norm_m)
+                        
+                    # Boost by priority
+                    priority = getattr(msg, 'priority', 0) or 0
+                    score = similarity + (priority * 0.05)
+                    scored.append((score, msg))
+                    
+            if scored:
+                scored.sort(key=lambda x: x[0], reverse=True)
+                return [msg for _, msg in scored[:limit]]
+
+        # 2. KEYWORD OVERLAP FALLBACK (if vector gen failed)
         query_words = set(query.lower().split())
         scored = []
         for msg in all_msgs:
             content_words = set((msg.content or '').lower().split())
             overlap = len(query_words & content_words)
             if overlap > 0:
-                # Boost by priority field if exists
                 priority = getattr(msg, 'priority', 0) or 0
                 score = overlap + (priority * 0.1)
                 scored.append((score, msg))

@@ -72,8 +72,15 @@ async def init_db() -> None:
                 await conn.execute(text(f"ALTER TABLE chat_history ADD COLUMN {col_name} {col_type}"))
                 logger.info("Database migration: Added column %s to chat_history table", col_name)
             except Exception:
-                # Исключение ожидаемо, если колонка уже существует в базе данных
                 pass
+                
+    # Программная миграция: автодобавление колонки vector_embedding в training_messages (AI-09)
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(text("ALTER TABLE training_messages ADD COLUMN vector_embedding TEXT"))
+            logger.info("Database migration: Added column vector_embedding to training_messages table")
+        except Exception:
+            pass
 
     logger.info("Database initialized successfully")
 
