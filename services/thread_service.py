@@ -1,4 +1,4 @@
-﻿import html
+import html
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
@@ -636,6 +636,53 @@ class ThreadService:
         message = "\n".join(base_lines)
 
         logger.error(message)
+
+    async def rename_thread_for_case(self, user_id: int, ticket_code: str, case_status: str, priority: str = None) -> None:
+        """OPS-10: Rename support thread with ticket info."""
+        if not self._is_support_group_configured():
+            return
+        try:
+            thread_id = await self.get_thread_id_for_user(user_id)
+            if not thread_id:
+                return
+            priority_str = f" [{priority}]" if priority else ""
+            new_name = f"#{ticket_code} [{case_status}]{priority_str}"
+            if len(new_name) > 128:
+                new_name = new_name[:125] + "..."
+            await self.bot.edit_forum_topic(
+                chat_id=self.support_group_id,
+                message_thread_id=thread_id,
+                name=new_name
+            )
+            logger.info("Renamed thread %s to %s", thread_id, new_name)
+        except Exception as e:
+            logger.warning("Failed to rename thread for user %s: %s", user_id, e)
+
+    async def send_critical_alert(self, user_id: int, ticket_code: str, message_text: str, username: str = None) -> None:
+        """OPS-15: Send critical P1 alert to configured channel."""
+        try:
+            async with get_session() as session:
+                config_repo = ConfigRepository(session)
+                chat_id_str = await config_repo.get("critical_alert_chat_id")
+            if not chat_id_str:
+                return
+            chat_id = int(chat_id_str)
+            user_display = f"@{username}" if username else str(user_id)
+            alert_text = (
+                f"🚨 <b>P1 CRITICAL</b>\n\n"
+                f"Обращение #{ticket_code}\n"
+                f"Пользователь: {user_display}\n\n"
+                f"Сообщение:\n"
+                f"<i>{message_text[:200]}</i>"
+            )
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text=alert_text,
+                parse_mode="HTML"
+            )
+            logger.info("Sent critical alert for ticket %s to chat %s", ticket_code, chat_id)
+        except Exception as e:
+            logger.error("Failed to send critical alert: %s", e)
 
 
 

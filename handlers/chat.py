@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import html
 import logging
 import re
@@ -21,6 +23,7 @@ from keyboards.menu import get_main_menu_keyboard, get_try_ai_again_keyboard
 from locales.loader import get_text
 from services.ai_service import AIService
 from services.bot_profile_service import set_user_bot_key
+from services.guardrails import is_safe_user_message  # AI-12 guardrails
 from services.thread_service import ThreadService
 from states.user_states import UserStates
 
@@ -96,6 +99,21 @@ async def handle_chat_message(message: Message, state: FSMContext):
     if user_message.startswith("/admin") or user_message.startswith("/start"):
         return
 
+    # AI-12: Guardrails — проверка на prompt injection и unsafe content
+    is_safe, reason = is_safe_user_message(user_message)
+    if not is_safe:
+        if reason == 'prompt_injection':
+            await message.answer("⚠️ Ваш запрос содержит недопустимые инструкции.")
+        elif reason == 'unsafe_content':
+            await message.answer("⚠️ Ваш запрос содержит недопустимый контент.")
+        return
+
+    # AI-13: Typing indicator — сразу показываем что бот обрабатывает
+    try:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    except Exception:
+        pass
+
     language = "en"
     username = None
     first_name = None
@@ -126,6 +144,20 @@ async def handle_chat_message(message: Message, state: FSMContext):
             return
 
         active_session_id = active_session.id
+
+        urgent_keywords = ["срочно", "critical", "urgent", "авария", "не работает", "горит"]
+        is_critical = active_session.case_status == "P1" or any(k in user_message.lower() for k in urgent_keywords)
+        
+        if is_critical:
+            try:
+                await thread_service.send_critical_alert(
+                    user_id=user_id,
+                    ticket_code=active_session.ticket_code or str(active_session.id),
+                    message_text=user_message,
+                    username=username
+                )
+            except Exception as e:
+                logger.error("Failed to send critical alert: %s", e)
 
         if is_direct_human_request(user_message):
             await chat_repo.deactivate_ai(user_id)
@@ -177,7 +209,7 @@ async def handle_chat_message(message: Message, state: FSMContext):
             role="user",
             content=user_message,
             message_id=message.message_id,
-            is_ai_handled=True,
+            is_ai_handled=False,
         )
 
         pending = await pending_repo.create(
@@ -211,6 +243,13 @@ async def handle_chat_message(message: Message, state: FSMContext):
     async with get_session() as session:
         training_repo = TrainingRepository(session)
         system_prompt = await ai_service.get_system_prompt(training_repo, language)
+
+    # Send placeholder while streaming
+    wait_msg = None
+    try:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    except Exception:
+        pass
 
     response_parts: List[str] = []
     stream_error: Exception | None = None
@@ -317,6 +356,7 @@ async def handle_chat_message(message: Message, state: FSMContext):
                 user_id=user_id,
                 role="assistant",
                 content=clean_text,
+                is_ai_handled=True,
             )
 
             if settings.SUPPORT_GROUP_ID:
@@ -349,6 +389,7 @@ async def handle_chat_message(message: Message, state: FSMContext):
             role="assistant",
             content=clean_text,
             message_id=response_msg.message_id,
+            is_ai_handled=True,
         )
 
     if settings.SUPPORT_GROUP_ID:
@@ -366,6 +407,99 @@ async def handle_chat_message(message: Message, state: FSMContext):
         )
 
     await _mark_pending(pending_request_id, failed=False)
+
+
+@router.message(UserStates.chatting, ~F.text)
+async def handle_user_attachments(message: Message, state: FSMContext):
+    """
+    TG-06: Вложения пользователя.
+    Пересылает фото, видео, голосовые, стикеры или документы в группу поддержки.
+    Автоматически переключает диалог на оператора (AI отключается).
+    """
+    user_id = message.from_user.id
+    username = message.from_user.username
+    first_name = message.from_user.first_name
+    
+    thread_service = ThreadService(message.bot)
+    
+    attachment_type = "[Вложение]"
+    file_id = None
+    media_type = None
+    if message.photo:
+        attachment_type = "[Фото]"
+        media_type = "photo"
+        file_id = message.photo[-1].file_id
+    elif message.document:
+        attachment_type = "[Документ]"
+        media_type = "document"
+        file_id = message.document.file_id
+    elif message.video:
+        attachment_type = "[Видео]"
+        media_type = "video"
+        file_id = message.video.file_id
+    elif message.voice:
+        attachment_type = "[Голосовое сообщение]"
+        media_type = "voice"
+        file_id = message.voice.file_id
+    elif message.audio:
+        attachment_type = "[Аудио]"
+        media_type = "audio"
+        file_id = message.audio.file_id
+    elif message.sticker:
+        attachment_type = "[Стикер]"
+        media_type = "sticker"
+        file_id = message.sticker.file_id
+
+    language = "en"
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        chat_repo = ChatRepository(session)
+        
+        user = await user_repo.get_by_id(user_id)
+        if user:
+            language = user.language
+            
+        active_session = await chat_repo.get_active_session(user_id)
+        if not active_session:
+            await message.answer(get_text("no_active_session", language))
+            return
+            
+        # 1. Отключаем AI для этой сессии
+        await chat_repo.deactivate_ai(user_id)
+        
+        # 2. Сохраняем системное описание и метаданные вложения в историю диалога (ADM-18)
+        await chat_repo.add_message(
+            user_id=user_id,
+            role="user",
+            content=attachment_type,
+            message_id=message.message_id,
+            is_ai_handled=False,
+            media_type=media_type,
+            file_id=file_id
+        )
+
+    # 3. Пересылаем вложение в топик поддержки
+    if settings.SUPPORT_GROUP_ID:
+        try:
+            thread_id = await thread_service.get_thread_id_for_user(user_id)
+            if thread_id:
+                await thread_service.send_user_message(
+                    user_id=user_id,
+                    text=f"отправил вложение ({attachment_type})",
+                    username=username,
+                    first_name=first_name,
+                )
+                await message.bot.copy_message(
+                    chat_id=settings.SUPPORT_GROUP_ID,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                    message_thread_id=thread_id
+                )
+        except Exception as e:
+            logger.error("Failed to forward attachment to support group: %s", e)
+
+    # 4. Отвечаем пользователю
+    await message.answer(get_text("human_called", language), parse_mode="HTML")
 
 
 @router.message(UserStates.waiting_clarification, F.text)
@@ -422,7 +556,7 @@ async def handle_clarification_answer(message: Message, state: FSMContext):
             role="user",
             content=combined_question,
             message_id=message.message_id,
-            is_ai_handled=True,
+            is_ai_handled=False,
         )
 
         history = await chat_repo.get_session_history(active_session_id, limit=40)
@@ -448,6 +582,13 @@ async def handle_clarification_answer(message: Message, state: FSMContext):
     async with get_session() as session:
         training_repo = TrainingRepository(session)
         system_prompt = await ai_service.get_system_prompt(training_repo, language)
+
+    # Send placeholder while streaming
+    wait_msg = None
+    try:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    except Exception:
+        pass
 
     response_parts: List[str] = []
     stream_error: Exception | None = None
@@ -507,6 +648,7 @@ async def handle_clarification_answer(message: Message, state: FSMContext):
                 user_id=user_id,
                 role="assistant",
                 content=clean_text,
+                is_ai_handled=True,
             )
 
             if settings.SUPPORT_GROUP_ID:
@@ -539,6 +681,7 @@ async def handle_clarification_answer(message: Message, state: FSMContext):
             role="assistant",
             content=clean_text,
             message_id=response_msg.message_id,
+            is_ai_handled=True,
         )
 
     if settings.SUPPORT_GROUP_ID:

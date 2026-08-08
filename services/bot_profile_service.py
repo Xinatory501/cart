@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from aiogram import Bot
@@ -68,13 +68,48 @@ _PROFILE_DEFINITIONS = [
 def get_launch_profiles() -> List[tuple[str, BotProfile]]:
     profiles: List[tuple[str, BotProfile]] = []
 
-    for key, region, default_language, topic_flag, token_getter in _PROFILE_DEFINITIONS:
-        token = token_getter()
-        if not token:
-            continue
+    # Новый формат: один BOT_TOKEN на экземпляр (приоритет)
+    primary_token = settings.primary_bot_token
+    if primary_token:
+        # Определяем язык и флаг из REGION_CODE
+        region_flags = {"BY": "🇧🇾", "KZ": "🇰🇿", "UZ": "🇺🇿"}
+        region_langs = {"BY": "ru", "KZ": "kk", "UZ": "uz"}
+        region_code = settings.REGION_CODE or "BY"
+        primary_language = settings.DEFAULT_LANGUAGE or region_langs.get(region_code, "ru")
+        flag = region_flags.get(region_code, "🏳️")
 
-        profiles.append(
-            (
+        profiles.append((
+            primary_token,
+            BotProfile(
+                key=settings.INSTANCE_ID or "BOT1",
+                region=region_code.lower(),
+                default_language=primary_language,
+                topic_flag=flag,
+            ),
+        ))
+
+    # Обратная совместимость: BOT2-BOT6 добавляются если токены заданы
+    for key, region, default_language, topic_flag, token_getter in _PROFILE_DEFINITIONS[1:]:
+        token = token_getter()
+        if not token or token == primary_token:
+            continue
+        profiles.append((
+            token,
+            BotProfile(
+                key=key,
+                region=region,
+                default_language=default_language,
+                topic_flag=topic_flag,
+            ),
+        ))
+
+    # Если нет BOT_TOKEN — старый режим с BOT1
+    if not primary_token:
+        for key, region, default_language, topic_flag, token_getter in _PROFILE_DEFINITIONS:
+            token = token_getter()
+            if not token:
+                continue
+            profiles.append((
                 token,
                 BotProfile(
                     key=key,
@@ -82,8 +117,7 @@ def get_launch_profiles() -> List[tuple[str, BotProfile]]:
                     default_language=default_language,
                     topic_flag=topic_flag,
                 ),
-            )
-        )
+            ))
 
     return profiles
 

@@ -1,0 +1,60 @@
+name: CartaMe Bot CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Check imports
+        env:
+          BOT_TOKEN: dummy_token_for_ci
+          ADMIN_IDS: '123456'
+        run: |
+          python3 -c "
+          import sys, os
+          os.environ['BOT_TOKEN'] = 'dummy'
+          os.environ['ADMIN_IDS'] = '123'
+          mods = ['config','database.models','keyboards.menu','keyboards.admin',
+                  'services.guardrails','services.region_catalog',
+                  'utils.encryption','utils.logger','locales.loader']
+          for m in mods:
+              __import__(m)
+              print(f'OK: {m}')
+          print('All imports OK')
+          "
+      
+      - name: Build Docker image
+        run: docker build -t cartame-bot:ci .
+  
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd ~/cartame
+            git pull
+            docker compose up -d --build
+            docker compose logs --tail=20

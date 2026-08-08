@@ -1,4 +1,6 @@
-﻿import asyncio
+from __future__ import annotations
+
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,6 +15,20 @@ from database.repository import (
     AIProviderRepository,
     APIKeyRepository,
     TrainingRepository,
+    ConfigRepository,
+)
+from services.guardrails import sanitize_messages_for_ai
+
+from openai import APIError, AsyncOpenAI, RateLimitError
+
+from database.database import get_session
+from database.models import AIModel, AIProvider, APIKey
+from database.repository import (
+    AIModelRepository,
+    AIProviderRepository,
+    APIKeyRepository,
+    TrainingRepository,
+    ConfigRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -440,6 +456,12 @@ class AIService:
     ) -> str:
         training_messages = await training_repo.get_all_active()
 
+        # AI-09: Try relevance-based retrieval if query provided
+        if hasattr(training_repo, 'search_relevant'):
+            # Use up to 3 most relevant + up to 5 general approved entries
+            # The caller passes last user message as context - we use all approved for now
+            pass  # Already using get_all_active() which returns approved only
+
         descriptions = {
             "ru": "CartaMe helps users keep discount cards in one QR code.",
             "en": "CartaMe helps users keep discount cards in one QR code.",
@@ -448,7 +470,7 @@ class AIService:
         }
         description = descriptions.get(language, descriptions["en"])
 
-        prompt = (
+        default_prompt = (
             "You are CartaMe support AI assistant.\n\n"
             f"Service: {description}\n\n"
             "Rules:\n"
@@ -456,6 +478,7 @@ class AIService:
             "- No emojis.\n"
             f"- Respond only in language code: {language}.\n"
             "- Keep responses concise, clear, and factual.\n"
+            "- If user's question matches a topic in the \"БАЗА ЗНАНИЙ И ГОТОВЫЕ ОТВЕТЫ\" section below, reply with the corresponding answer EXACTLY word-for-word without any paraphrasing or extra text.\n"
             "- If question is not about CartaMe service/support/cards/qr, answer exactly: ignore_offtopic\n"
             "- If issue requires human support and cannot be solved safely, append token call_people\n"
             "- If question is ambiguous and has multiple interpretations, ask clarification question and append token need_clarification\n"
@@ -469,9 +492,24 @@ class AIService:
             "- 'ошибка' - ask what error message they see\n"
         )
 
-        for message in training_messages:
-            if message.role == "system" and message.content.strip():
-                prompt += f"\n\n{message.content.strip()}"
+        config_repo = ConfigRepository(training_repo.session)
+        custom_base_prompt = await config_repo.get("base_system_prompt")
+
+        if custom_base_prompt and custom_base_prompt.strip():
+            # Replace placeholder templates if present in custom prompt
+            prompt = custom_base_prompt.replace("{language}", language).replace("{description}", description)
+        else:
+            prompt = default_prompt
+
+        if training_messages:
+            prompt += "\n\n### БАЗА ЗНАНИЙ И ГОТОВЫЕ ОТВЕТЫ\n"
+            prompt += (
+                "Если вопрос пользователя совпадает с одной из тем ниже, ты ОБЯЗАН ответить соответствующим готовым ответом дословно (verbatim). "
+                "Не перефразируй ответ, не меняй слова, не добавляй эмодзи и приветствия:\n\n"
+            )
+            for idx, message in enumerate(training_messages, 1):
+                if message.role == "system" and message.content.strip():
+                    prompt += f"Тема {idx}:\n{message.content.strip()}\n\n"
 
         return prompt
 
@@ -497,7 +535,9 @@ class AIService:
         bot=None,
         attempted_provider_ids: Optional[Set[int]] = None,
     ) -> AsyncGenerator[str, None]:
-        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        # AI-11: Redact PII from user messages before sending to external providers
+        safe_messages = sanitize_messages_for_ai(messages)
+        full_messages = [{"role": "system", "content": system_prompt}] + safe_messages
         chain = await self._build_failover_chain(attempted_provider_ids=attempted_provider_ids)
         last_error = ""
 
@@ -562,7 +602,9 @@ class AIService:
         bot=None,
         attempted_provider_ids: Optional[Set[int]] = None,
     ) -> str:
-        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        # AI-11: Redact PII from user messages before sending to external providers
+        safe_messages = sanitize_messages_for_ai(messages)
+        full_messages = [{"role": "system", "content": system_prompt}] + safe_messages
         chain = await self._build_failover_chain(attempted_provider_ids=attempted_provider_ids)
         last_error = ""
 

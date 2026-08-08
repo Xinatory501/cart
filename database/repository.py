@@ -1,4 +1,7 @@
+from __future__ import annotations
 
+import random
+import string
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from sqlalchemy import select, update, delete, and_, or_, func
@@ -10,12 +13,19 @@ from database.models import (
     TrainingMessage,
     ChatHistory,
     ChatSession,
+    CaseEvent,
+    CsatResponse,
     FloodLog,
     AdminAction,
     Metric,
     AIProvider,
     APIKey
 )
+
+
+def _generate_ticket_code() -> str:
+    """Генерирует случайный 6-значный буквенно-цифровой код обращения."""
+    return ''.join(random.choices(string.digits, k=6))
 
 class UserRepository:
 
@@ -130,6 +140,20 @@ class UserRepository:
         role = result.scalar_one_or_none()
         return role == "admin"
 
+    async def is_operator(self, user_id: int) -> bool:
+        result = await self.session.execute(
+            select(User.role).where(User.id == user_id)
+        )
+        role = result.scalar_one_or_none()
+        return role in ("operator", "supervisor", "project_admin", "superadmin", "admin")
+
+    async def has_role(self, user_id: int, *roles: str) -> bool:
+        result = await self.session.execute(
+            select(User.role).where(User.id == user_id)
+        )
+        role = result.scalar_one_or_none()
+        return role in roles
+
     async def get_all_admins(self) -> List[User]:
         result = await self.session.execute(
             select(User).where(User.role == "admin")
@@ -181,6 +205,38 @@ class ConfigRepository:
             self.session.add(config)
         await self.session.commit()
 
+    async def get_working_hours(self) -> dict:
+        """OPS-17: Get per-instance working schedule."""
+        return {
+            'start': await self.get('working_hours_start') or '09:00',
+            'end': await self.get('working_hours_end') or '18:00',
+            'timezone': await self.get('working_hours_tz') or 'Europe/Moscow',
+            'work_days': await self.get('working_days') or 'Mon-Fri',
+            'holiday_mode': await self.get('holiday_mode') or '0',
+        }
+
+    async def set_working_hours(self, key: str, value: str) -> None:
+        await self.set(f'working_hours_{key}', value)
+
+    async def get_branding(self) -> dict:
+        """REG-11: Get branding profile (name, contacts, privacy_url, etc.)"""
+        keys = ['brand_name','brand_contacts','brand_privacy_url','brand_support_schedule']
+        result = {}
+        for key in keys:
+            val = await self.get(key)
+            result[key] = val or ''
+        return result
+
+    async def set_branding(self, key: str, value: str) -> None:
+        await self.set(key, value)
+
+    async def bump_profile_version(self) -> str:
+        """REG-12: Increment profile config version for audit."""
+        import datetime
+        version = datetime.datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        await self.set('profile_version', version)
+        return version
+
     async def delete(self, key: str):
         await self.session.execute(
             delete(Config).where(Config.key == key)
@@ -195,7 +251,12 @@ class TrainingRepository:
     async def get_all_active(self) -> List[TrainingMessage]:
         result = await self.session.execute(
             select(TrainingMessage)
-            .where(TrainingMessage.is_active == True)
+            .where(
+                and_(
+                    TrainingMessage.is_active == True,
+                    TrainingMessage.kb_status == 'approved'
+                )
+            )
             .order_by(
                 TrainingMessage.priority.asc(),
                 TrainingMessage.created_at.asc()
@@ -203,12 +264,62 @@ class TrainingRepository:
         )
         return list(result.scalars().all())
 
+    async def search_relevant(self, query: str, limit: int = 5) -> List[TrainingMessage]:
+        """AI-09: Find most relevant KB entries for user query by keyword matching."""
+        # Get all approved entries
+        result = await self.session.execute(
+            select(TrainingMessage)
+            .where(TrainingMessage.kb_status == 'approved', TrainingMessage.is_active == True)
+        )
+        all_msgs = result.scalars().all()
+        
+        if not all_msgs:
+            return []
+        
+        query_words = set(query.lower().split())
+        scored = []
+        for msg in all_msgs:
+            content_words = set((msg.content or '').lower().split())
+            overlap = len(query_words & content_words)
+            if overlap > 0:
+                # Boost by priority field if exists
+                priority = getattr(msg, 'priority', 0) or 0
+                score = overlap + (priority * 0.1)
+                scored.append((score, msg))
+        
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [msg for _, msg in scored[:limit]]
+
     async def add(self, role: str, content: str, priority: int = 0) -> TrainingMessage:
-        msg = TrainingMessage(role=role, content=content, priority=priority)
+        msg = TrainingMessage(role=role, content=content, priority=priority, kb_status='draft')
         self.session.add(msg)
         await self.session.commit()
         await self.session.refresh(msg)
         return msg
+
+    async def approve(self, msg_id: int, reviewer_id: Optional[int] = None):
+        await self.session.execute(
+            update(TrainingMessage)
+            .where(TrainingMessage.id == msg_id)
+            .values(kb_status='approved', reviewer_id=reviewer_id, updated_at=datetime.utcnow())
+        )
+        await self.session.commit()
+
+    async def retire(self, msg_id: int):
+        await self.session.execute(
+            update(TrainingMessage)
+            .where(TrainingMessage.id == msg_id)
+            .values(kb_status='retired', is_active=False, updated_at=datetime.utcnow())
+        )
+        await self.session.commit()
+
+    async def get_by_status(self, status: str) -> List[TrainingMessage]:
+        result = await self.session.execute(
+            select(TrainingMessage)
+            .where(TrainingMessage.kb_status == status)
+            .order_by(TrainingMessage.created_at.desc())
+        )
+        return list(result.scalars().all())
 
     async def delete(self, msg_id: int):
         await self.session.execute(
@@ -235,23 +346,188 @@ class TrainingRepository:
             )
             await self.session.commit()
 
+    async def update_content(self, msg_id: int, content: str):
+        await self.session.execute(
+            update(TrainingMessage)
+            .where(TrainingMessage.id == msg_id)
+            .values(content=content, updated_at=datetime.utcnow())
+        )
+        await self.session.commit()
+
+    async def update_priority(self, msg_id: int, priority: int):
+        await self.session.execute(
+            update(TrainingMessage)
+            .where(TrainingMessage.id == msg_id)
+            .values(priority=priority, updated_at=datetime.utcnow())
+        )
+        await self.session.commit()
+
 class ChatRepository:
 
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create_session(self, user_id: int) -> ChatSession:
+    async def create_session(self, user_id: int, channel: str = "telegram") -> ChatSession:
+        """Создаёт новый кейс с уникальным 6-значным тикетом (CASE-01 / TG-03)."""
+        # Закрываем предыдущую активную сессию
         await self.session.execute(
             update(ChatSession)
             .where(and_(ChatSession.user_id == user_id, ChatSession.is_active == True))
-            .values(is_active=False, ended_at=datetime.utcnow())
+            .values(is_active=False, ended_at=datetime.utcnow(), case_status="CLOSED")
         )
 
-        session = ChatSession(user_id=user_id)
+        # Генерируем уникальный тикет (retry on collision)
+        ticket_code = None
+        for _ in range(10):
+            candidate = _generate_ticket_code()
+            existing = await self.session.execute(
+                select(ChatSession.id).where(ChatSession.ticket_code == candidate)
+            )
+            if existing.scalar_one_or_none() is None:
+                ticket_code = candidate
+                break
+
+        session = ChatSession(
+            user_id=user_id,
+            ticket_code=ticket_code,
+            case_status="NEW",
+            channel=channel,
+            sla_first_response_deadline=datetime.utcnow() + timedelta(hours=4)
+        )
         self.session.add(session)
+        await self.session.flush()  # Получаем id до commit
+
+        # Audit trail: первое событие
+        event = CaseEvent(
+            session_id=session.id,
+            event_type="status_change",
+            from_value=None,
+            to_value="NEW",
+            actor_id=user_id,
+            actor_role="user",
+        )
+        self.session.add(event)
         await self.session.commit()
         await self.session.refresh(session)
         return session
+
+    async def update_case_status(
+        self,
+        session_id: int,
+        new_status: str,
+        actor_id: Optional[int] = None,
+        actor_role: str = "system",
+        note: Optional[str] = None,
+    ):
+        """Обновляет статус кейса и добавляет audit event."""
+        result = await self.session.execute(
+            select(ChatSession.case_status).where(ChatSession.id == session_id)
+        )
+        old_status = result.scalar_one_or_none()
+
+        values: Dict = {"case_status": new_status}
+        if new_status in ("RESOLVED", "CLOSED"):
+            values["is_active"] = False
+            values["ended_at"] = datetime.utcnow()
+        if new_status == "RESOLVED":
+            values["resolved_at"] = datetime.utcnow()
+        if new_status == "CLOSED":
+            values["closed_at"] = datetime.utcnow()
+
+        await self.session.execute(
+            update(ChatSession).where(ChatSession.id == session_id).values(**values)
+        )
+
+        event = CaseEvent(
+            session_id=session_id,
+            event_type="status_change",
+            from_value=old_status,
+            to_value=new_status,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            note=note,
+        )
+        self.session.add(event)
+        await self.session.commit()
+
+    async def set_pinned_message_id(self, session_id: int, message_id: int):
+        """Сохраняет ID закреплённого сообщения с тикетом."""
+        await self.session.execute(
+            update(ChatSession)
+            .where(ChatSession.id == session_id)
+            .values(pinned_message_id=message_id)
+        )
+        await self.session.commit()
+
+    async def get_session_by_thread_id(self, thread_id: int) -> Optional[ChatSession]:
+        result = await self.session.execute(
+            select(ChatSession).where(
+                ChatSession.support_thread_id == thread_id,
+                ChatSession.is_active == True
+            ).order_by(ChatSession.started_at.desc())
+        )
+        return result.scalars().first()
+
+    async def assign_owner(self, session_id: int, owner_id: int):
+        await self.session.execute(
+            update(ChatSession).where(ChatSession.id == session_id).values(owner_id=owner_id, case_status='IN_PROGRESS')
+        )
+        event = CaseEvent(
+            session_id=session_id,
+            event_type="status_change",
+            to_value="IN_PROGRESS",
+            actor_id=owner_id,
+            actor_role="support",
+        )
+        self.session.add(event)
+        await self.session.commit()
+
+    async def get_session_by_ticket(self, ticket_code: str) -> Optional[ChatSession]:
+        """Ищет кейс по 6-значному коду тикета."""
+        result = await self.session.execute(
+            select(ChatSession).where(ChatSession.ticket_code == ticket_code)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_user_sessions(self, user_id: int, limit: int = 20) -> List[ChatSession]:
+        """Возвращает список кейсов пользователя."""
+        result = await self.session.execute(
+            select(ChatSession)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatSession.started_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def add_csat(
+        self,
+        session_id: int,
+        user_id: int,
+        rating: int,
+        comment: Optional[str] = None,
+        operator_id: Optional[int] = None,
+        ai_handled: bool = True,
+    ) -> CsatResponse:
+        """Сохраняет оценку CSAT после закрытия кейса."""
+        existing = await self.session.execute(
+            select(CsatResponse).where(CsatResponse.session_id == session_id)
+        )
+        if existing.scalar_one_or_none():
+            return  # Идемпотентность: одна оценка на кейс
+
+        csat = CsatResponse(
+            session_id=session_id,
+            user_id=user_id,
+            rating=rating,
+            comment=comment,
+            operator_id=operator_id,
+            ai_handled=ai_handled,
+        )
+        self.session.add(csat)
+        await self.session.commit()
+        await self.session.refresh(csat)
+        return csat
+
 
     async def get_active_session(self, user_id: int) -> Optional[ChatSession]:
         result = await self.session.execute(
@@ -266,7 +542,9 @@ class ChatRepository:
         role: str,
         content: str,
         message_id: Optional[int] = None,
-        is_ai_handled: bool = True
+        is_ai_handled: bool = False,
+        media_type: Optional[str] = None,
+        file_id: Optional[str] = None
     ) -> ChatHistory:
         session = await self.get_active_session(user_id)
         session_id = session.id if session else None
@@ -277,7 +555,9 @@ class ChatRepository:
             role=role,
             content=content,
             session_id=session_id,
-            is_ai_handled=is_ai_handled
+            is_ai_handled=is_ai_handled,
+            media_type=media_type,
+            file_id=file_id
         )
         self.session.add(msg)
         await self.session.commit()
@@ -416,6 +696,33 @@ class AdminRepository:
             ))
         )
         return result.scalar()
+
+    async def get_case_stats_by_period(self, start_date: datetime, end_date: datetime) -> dict:
+        total = await self.session.scalar(
+            select(func.count(ChatSession.id)).where(
+                ChatSession.started_at >= start_date,
+                ChatSession.started_at <= end_date
+            )
+        )
+        resolved_by_ai = await self.session.scalar(
+            select(func.count(ChatSession.id)).where(
+                ChatSession.started_at >= start_date,
+                ChatSession.started_at <= end_date,
+                ChatSession.case_status.in_(['AI_RESOLVED', 'CLOSED']),
+                ChatSession.owner_id == None
+            )
+        )
+        avg_csat = await self.session.scalar(
+            select(func.avg(CsatResponse.rating)).where(
+                CsatResponse.created_at >= start_date,
+                CsatResponse.created_at <= end_date
+            )
+        )
+        return {
+            'total_cases': total or 0,
+            'resolved_by_ai': resolved_by_ai or 0,
+            'avg_csat': round(float(avg_csat or 0), 2),
+        }
 
     async def get_questions_by_period(
         self,
@@ -586,7 +893,9 @@ class APIKeyRepository:
 
     @staticmethod
     def normalize_api_key(api_key: Optional[str]) -> str:
+        from utils.encryption import decrypt_value
         cleaned = (api_key or "").strip()
+        cleaned = decrypt_value(cleaned)
 
         if cleaned.lower().startswith("bearer "):
             cleaned = cleaned[7:].strip()
@@ -989,12 +1298,20 @@ class PendingRequestRepository:
 
     async def create(self, user_id: int, message_text: str, message_id: int, session_id: int):
         from database.models import PendingRequest
+        idempotency_key = f"{user_id}_{message_id}_{session_id}"
+        existing = await self.session.execute(
+            select(PendingRequest).where(PendingRequest.idempotency_key == idempotency_key)
+        )
+        if existing_record := existing.scalar_one_or_none():
+            return existing_record
+
         pending = PendingRequest(
             user_id=user_id,
             message_text=message_text,
             message_id=message_id,
             session_id=session_id,
-            status="pending"
+            status="pending",
+            idempotency_key=idempotency_key
         )
         self.session.add(pending)
         await self.session.commit()
@@ -1013,7 +1330,11 @@ class PendingRequestRepository:
         await self.session.execute(
             update(PendingRequest)
             .where(PendingRequest.id == request_id)
-            .values(status="processing", started_at=datetime.utcnow())
+            .values(
+                status="processing",
+                started_at=datetime.utcnow(),
+                attempt_count=PendingRequest.attempt_count + 1
+            )
         )
         await self.session.commit()
 

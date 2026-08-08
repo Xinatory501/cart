@@ -28,6 +28,9 @@ class AntiFloodMiddleware(BaseMiddleware):
             user_repo = UserRepository(session)
             config_repo = ConfigRepository(session)
 
+            if event.text and event.text.startswith(("/start", "/admin", "/help")):
+                return await handler(event, data)
+
             is_admin = user_id in settings.admin_ids or await user_repo.is_admin(user_id)
             if is_admin:
                 return await handler(event, data)
@@ -52,5 +55,7 @@ class AntiFloodMiddleware(BaseMiddleware):
                     f"Вы временно заблокированы на {ban_minutes} минут."
                 )
                 return
+            elif count == threshold:
+                await event.answer("⚠️ Вы отправляете сообщения слишком быстро. Следующее нарушение приведёт к блокировке.")
 
         return await handler(event, data)

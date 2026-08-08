@@ -52,5 +52,15 @@
   "cancel": "❌ Cancel",
   "back": "⬅️ Back",
   "try_ai_again": "Try AI again",
-  "error_try_later": "An error occurred. Please try again later."
+  "error_try_later": "An error occurred. Please try again later.",
+  "new_case_started": "✅ New ticket created!\n\nYour ticket number: <code>{ticket}</code>\n\nSave this code — you will need it to track your request status.\n\nPlease ask your question:",
+  "case_closed_csat": "✅ Ticket closed. Please rate the quality of support:",
+  "csat_thanks": "Thank you for your rating {rating}⭐! If you need help again — please create a new ticket.",
+  "csat_skip": "⏭ Skip",
+  "csat_comment_prompt": "Leave a comment (optional):",
+  "case_closed_timeout": "The ticket was automatically closed due to inactivity timeout.",
+  "privacy_consent_required": "You must accept the data processing terms to continue.",
+  "accept_privacy": "✅ Accept",
+  "decline_privacy": "❌ Decline",
+  "help_text": "📖 Help\n\nAvailable commands:\n/start — Start working\n/help — Help\n\nHow to create a ticket:\n1. Click \"🆕 Start a new chat\"\n2. Describe your problem\n3. AI assistant will answer your question\n4. If you need an operator, type \"operator\" or \"call a human\"\n\nTicket number:\nWhen creating a ticket, you will receive a 6-digit code. Save it to track status.\n\nSupport schedule:\nMon-Fri: 09:00-18:00\nSat-Sun: closed\n\nIf the bot does not answer — try /start"
 }

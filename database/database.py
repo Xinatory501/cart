@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,11 +21,20 @@ async_session_maker: async_sessionmaker[AsyncSession] = None
 def get_engine() -> AsyncEngine:
     global engine
     if engine is None:
-        engine = create_async_engine(
-            settings.DATABASE_URL,
-            echo=False,
-            future=True,
-        )
+        if 'postgresql' in settings.DATABASE_URL:
+            engine = create_async_engine(
+                settings.DATABASE_URL,
+                echo=False,
+                pool_pre_ping=True,
+                pool_size=5,
+                max_overflow=10,
+            )
+        else:
+            engine = create_async_engine(
+                settings.DATABASE_URL,
+                echo=False,
+                connect_args={'check_same_thread': False},
+            )
     return engine
 
 def get_session_maker() -> async_sessionmaker[AsyncSession]:
@@ -54,6 +64,16 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Программная миграция: автодобавление новых колонок для вложений в старые базы данных (ADM-18)
+    async with engine.begin() as conn:
+        for col_name, col_type in [("media_type", "VARCHAR(50)"), ("file_id", "VARCHAR(255)")]:
+            try:
+                await conn.execute(text(f"ALTER TABLE chat_history ADD COLUMN {col_name} {col_type}"))
+                logger.info("Database migration: Added column %s to chat_history table", col_name)
+            except Exception:
+                # Исключение ожидаемо, если колонка уже существует в базе данных
+                pass
 
     logger.info("Database initialized successfully")
 
@@ -100,6 +120,8 @@ async def init_default_config() -> None:
             )
             await model_repo.create(openrouter.id, "deepseek/deepseek-r1-0528:free", "DeepSeek R1 Free", is_default=True)
             await model_repo.create(openrouter.id, "openai/gpt-3.5-turbo", "GPT-3.5 Turbo", is_default=False)
+            await model_repo.create(openrouter.id, "google/gemma-2-9b-it:free", "Gemma 2 9B Free", is_default=False)
+            await model_repo.create(openrouter.id, "google/gemma-2-27b-it", "Gemma 2 27B", is_default=False)
             logger.info("OpenRouter provider created")
 
             groq = await ai_provider_repo.create(
@@ -115,6 +137,7 @@ async def init_default_config() -> None:
             )
             await model_repo.create(groq.id, "llama-3.1-8b-instant", "Llama 3.1 8B", is_default=True)
             await model_repo.create(groq.id, "mixtral-8x7b-32768", "Mixtral 8x7B", is_default=False)
+            await model_repo.create(groq.id, "gemma2-9b-it", "Gemma 2 9B", is_default=False)
             logger.info("Groq provider created")
 
             openai = await ai_provider_repo.create(

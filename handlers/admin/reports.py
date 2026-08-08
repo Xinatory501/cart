@@ -1,4 +1,4 @@
-﻿from aiogram import F, Router
+from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from database.database import get_session
@@ -50,6 +50,12 @@ async def generate_report(callback: CallbackQuery):
                 start_date=start_date,
                 end_date=end_date,
             )
+            
+            stats = await admin_repo.get_case_stats_by_period(start_date, end_date)
+            report += f"\n\n📈 <b>Статистика обращений:</b>\n"
+            report += f"• Всего обращений (кейсов): {stats['total_cases']}\n"
+            report += f"• Успешно закрыто AI (без оператора): {stats['resolved_by_ai']}\n"
+            report += f"• Средняя оценка CSAT: {stats['avg_csat']}\n"
 
         await callback.message.answer(report, parse_mode="HTML")
 

@@ -52,5 +52,15 @@
   "cancel": "❌ Bekor qilish",
   "back": "⬅️ Orqaga",
   "try_ai_again": "AI ni yana sinab ko'rish",
-  "error_try_later": "Xatolik yuz berdi. Keyinroq qayta urinib ko'ring."
+  "error_try_later": "Xatolik yuz berdi. Keyinroq qayta urinib ko'ring.",
+  "new_case_started": "✅ Yangi murojaat yaratildi!\n\nSizning murojaat raqamingiz: <code>{ticket}</code>\n\nBu kodni saqlang — u holat kuzatuvi uchun kerak.\n\nSavolingizni yozing:",
+  "case_closed_csat": "✅ Murojaat yopildi. Qo'llab-quvvatlash sifatini baholang:",
+  "csat_thanks": "Bahoyingiz uchun rahmat {rating}⭐! Yordam kerak bo'lsa — yangi murojaat oching.",
+  "csat_skip": "⏭ O'tkazib yuborish",
+  "csat_comment_prompt": "Izoh yozing (ixtiyoriy):",
+  "case_closed_timeout": "Murojaat kutish vaqti tugaganligi sababli avtomatik yopildi.",
+  "privacy_consent_required": "Davom etish uchun ma'lumotlarni qayta ishlash shartlarini qabul qilish kerak.",
+  "accept_privacy": "✅ Qabul qilaman",
+  "decline_privacy": "❌ Rad etish",
+  "help_text": "📖 Yordam\n\nMavjud buyruqlar:\n/start — Ishni boshlash\n/help — Yordam\n\nMurojaatni qanday yaratish kerak:\n1. \"🆕 Yangi chat boshlash\" tugmasini bosing\n2. Muammoingizni tasvirlab bering\n3. AI yordamchisi savolingizga javob beradi\n4. Agar operator kerak bo'lsa — \"operator\" yoki \"odam chaqirish\" deb yozing\n\nMurojaat raqami:\nMurojaat yaratishda siz 6 xonali kod olasiz. Holatni kuzatish uchun uni saqlang.\n\nQo'llab-quvvatlash ish jadvali:\nDu-Ju: 09:00-18:00\nSh-Ya: dam olish kuni\n\nAgar bot javob bermasa — /start ni sinab ko'ring"
 }

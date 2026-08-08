@@ -1,4 +1,5 @@
-﻿import asyncio
+from __future__ import annotations
+import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
@@ -8,12 +9,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import settings
 from database.database import close_db, init_db
-from handlers import chat, menu, start
+from handlers import chat, menu, start, help
 from handlers import settings as settings_handler
 from handlers.admin import (
     antiflood_settings,
     api_keys,
     database_backup,
+    export as admin_export,
     main as admin_main,
     privacy_policy,
     reports,
@@ -23,10 +25,12 @@ from handlers.admin import (
 from handlers.group import support
 from middlewares.antiflood import AntiFloodMiddleware
 from middlewares.ban_check import BanCheckMiddleware
+from middlewares.admin_auth import AdminAuthMiddleware
 from services.bot_profile_service import get_launch_profiles, register_runtime_profile
 from services.pending_service import PendingService
 from services.thread_service import ThreadService
 from utils.logger import setup_logger
+from utils.task_registry import task_registry
 
 
 async def main():
@@ -38,15 +42,17 @@ async def main():
 
     await init_db()
 
-    if not settings.bot1_token:
+    # Поддержка нового формата BOT_TOKEN (один экземпляр) и старого BOT1-BOT6
+    primary_token = settings.primary_bot_token
+    if not primary_token:
         raise RuntimeError(
-            "Missing required BOT1_TOKEN. "
-            "BOT2_TOKEN to BOT6_TOKEN are optional."
+            "Missing required BOT_TOKEN (or BOT1_TOKEN for legacy mode). "
+            "Set BOT_TOKEN in .env for single-instance deployment."
         )
 
     launch_profiles = get_launch_profiles()
 
-    bots: list[Bot] = []
+    bots: list = []
     for token, profile in launch_profiles:
         bot = Bot(
             token=token,
@@ -77,8 +83,10 @@ async def main():
 
     dp.message.middleware(BanCheckMiddleware())
     dp.message.middleware(AntiFloodMiddleware())
+    dp.callback_query.middleware(AdminAuthMiddleware())
 
     dp.include_router(start.router)
+    dp.include_router(help.router)
     dp.include_router(admin_main.router)
 
     dp.include_router(api_keys.router)
@@ -88,6 +96,7 @@ async def main():
     dp.include_router(training.router)
     dp.include_router(database_backup.router)
     dp.include_router(reports.router)
+    dp.include_router(admin_export.router)  # ADM-13: экспорт истории по тикету
 
     dp.include_router(support.router)
 
@@ -100,10 +109,20 @@ async def main():
     await PendingService.process_pending_requests(bots)
     logger.info("Pending requests processed")
 
+    # OPS-18: SLA timer
+    from services.sla_service import SLAService
+    sla_service = SLAService(bots)
+    task_registry.register(sla_service.start(), "sla_service")
+
+    from services.retention_service import RetentionService
+    retention_service = RetentionService()
+    task_registry.register(retention_service.start(), "retention_service")
+
     try:
         await dp.start_polling(*bots, allowed_updates=dp.resolve_used_update_types())
     finally:
         await close_db()
+        await task_registry.graceful_shutdown()
         for bot in bots:
             await bot.session.close()
         logger.info("Bots stopped")

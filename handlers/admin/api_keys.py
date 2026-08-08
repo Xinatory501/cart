@@ -1,4 +1,5 @@
-﻿import re
+from __future__ import annotations
+import re
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -6,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from database.database import get_session
 from database.repository import AIProviderRepository, APIKeyRepository, AIModelRepository, AdminRepository
 from states.admin_states import AdminStates
+from utils.encryption import mask_key, encrypt_value, decrypt_value
 
 router = Router()
 
@@ -403,7 +405,7 @@ async def remote_provider_model_step(message: Message, state: FSMContext):
 
         await api_key_repo.create(
             provider_id=provider.id,
-            api_key=api_key,
+            api_key=encrypt_value(api_key),
             name="Main key",
         )
 
@@ -542,7 +544,7 @@ async def save_new_key(message: Message, state: FSMContext):
 
         await api_key_repo.create(
             provider_id=provider_id,
-            api_key=api_key,
+            api_key=encrypt_value(api_key),
             name=name
         )
 
@@ -610,7 +612,8 @@ async def manage_key(callback: CallbackQuery):
     text = f"🔑 <b>Управление ключом</b>\n\n"
     text += f"<b>Название:</b> {key.name or f'Ключ {key.id}'}\n"
     text += f"<b>Статус:</b> {'✅ Активен' if key.is_active else '❌ Неактивен'}\n"
-    text += f"<b>Ключ:</b> <code>{key.api_key[:10]}...{key.api_key[-4:]}</code>\n\n"
+    masked = mask_key(key.api_key)
+    text += f"<b>Ключ:</b> <code>{masked}</code>\n\n"
 
     if key.requests_limit:
         text += f"<b>Лимит:</b> {key.requests_made}/{key.requests_limit}\n"

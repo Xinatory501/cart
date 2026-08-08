@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, Message
@@ -11,6 +12,35 @@ from locales.loader import get_text
 from services.backup_service import BackupService
 from services.thread_service import ThreadService
 from states.admin_states import AdminStates
+import sqlite3
+import tempfile
+from datetime import datetime
+
+async def validate_sqlite(file_bytes: bytes) -> tuple[bool, str]:
+    """ADM-11: Validate SQLite file before restore."""
+    # Check magic bytes
+    if not file_bytes.startswith(b'SQLite format 3\x00'):
+        return False, 'Файл не является SQLite базой данных'
+    # Try to open and read
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        conn = sqlite3.connect(tmp_path)
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        conn.close()
+        import os; os.unlink(tmp_path)
+        if not tables:
+            return False, 'База данных пуста'
+        return True, f'OK: {len(tables)} таблиц'
+    except Exception as e:
+        return False, f'Ошибка валидации: {e}'
+
+async def backup_before_restore(db_path: str) -> str:
+    """Create timestamped backup before restore."""
+    backup_path = f'{db_path}.backup_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+    shutil.copy2(db_path, backup_path)
+    return backup_path
 
 router = Router()
 
@@ -165,9 +195,18 @@ async def confirm_restore(callback: CallbackQuery, state: FSMContext):
         from config import settings
         db_path = settings.DATABASE_URL.replace("sqlite+aiosqlite:///", "")
 
-        backup_current = f"{db_path}.backup_before_restore"
-        if os.path.exists(db_path):
-            shutil.copy2(db_path, backup_current)
+        with open(temp_path, 'rb') as f:
+            file_bytes = f.read()
+
+        is_valid, msg = await validate_sqlite(file_bytes)
+        if not is_valid:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            await callback.message.edit_text(f"❌ <b>Ошибка валидации базы данных</b>\n\n{msg}", parse_mode="HTML")
+            await state.clear()
+            return
+
+        backup_current = await backup_before_restore(db_path)
 
         shutil.copy2(temp_path, db_path)
         os.remove(temp_path)
@@ -176,6 +215,7 @@ async def confirm_restore(callback: CallbackQuery, state: FSMContext):
             thread_service = ThreadService(callback.bot)
             await thread_service.send_log_message(
                 f"✅ Database restored successfully by admin {user_id}\n"
+                f"Validation: {msg}\n"
                 f"Previous DB backed up to: {backup_current}"
             )
         except Exception:

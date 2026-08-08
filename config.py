@@ -1,8 +1,26 @@
+"""
+Конфигурация экземпляра бота (Instance Profile).
+Загружается из переменных окружения при старте.
+Поддерживает мультибот-архитектуру через отдельные .env на деплой.
+"""
+from __future__ import annotations
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import List, Optional
 
-class Settings(BaseSettings):
 
+class Settings(BaseSettings):
+    # ---- Идентификация экземпляра ----
+    INSTANCE_ID: str = "cartame_by"
+    CLIENT_CODE: str = "CARTAME"
+    PROJECT_CODE: str = "CARTAME_SUPPORT_BY"
+    REGION_CODE: str = "BY"
+    PROJECT_TYPE: str = "BUSINESS"  # BUSINESS | BANK
+
+    # ---- Telegram ----
+    # Новый формат (один токен на экземпляр)
+    BOT_TOKEN: str = ""
+    # Обратная совместимость со старым форматом BOT1-BOT6
     BOT1_TOKEN: str = ""
     BOT2_TOKEN: str = ""
     BOT3_TOKEN: str = ""
@@ -16,11 +34,21 @@ class Settings(BaseSettings):
     BOT5_TOKE: str = ""
     BOT6_TOKE: str = ""
     SUPPORT_GROUP_ID: Optional[int] = None
-
     ADMIN_IDS: str = ""
 
-    DATABASE_URL: str = "sqlite+aiosqlite:///data/cartame_bot.db"
-    DEFAULT_LANGUAGE: str = "en"
+    # ---- База данных ----
+    DATABASE_URL: str = Field(default='sqlite+aiosqlite:///./data/bot.db')
+
+    # ---- Безопасность и логирование ----
+    SECRET_ENCRYPTION_KEY: str = ""
+    LOG_FORMAT: str = "text"
+    LOG_LEVEL: str = "INFO"
+    CORS_ALLOWED_ORIGINS: str = "http://localhost:3000"
+
+    # ---- Локализация ----
+    DEFAULT_LANGUAGE: str = "ru"
+    INSTANCE_LANGUAGES: str = "ru"  # Разделённые запятой языки экземпляра
+    INSTANCE_TIMEZONE: str = "Europe/Minsk"
 
     @property
     def admin_ids(self) -> List[int]:
@@ -28,6 +56,25 @@ class Settings(BaseSettings):
             return []
         return [int(id.strip()) for id in self.ADMIN_IDS.split(',') if id.strip()]
 
+    @property
+    def instance_languages(self) -> List[str]:
+        """Список языков, доступных в данном экземпляре."""
+        raw = self.INSTANCE_LANGUAGES or 'ru'
+        langs = [l.strip() for l in raw.split(',') if l.strip()]
+        # REG-05: map kz->kk
+        return ['kk' if l == 'kz' else l for l in langs]
+
+    @property
+    def primary_bot_token(self) -> str:
+        """Возвращает токен бота: сначала BOT_TOKEN, потом BOT1_TOKEN (обратная совместимость)."""
+        return (
+            self.BOT_TOKEN
+            or self.BOT1_TOKEN
+            or self.BOT1_TOKE
+            or ""
+        ).strip()
+
+    # --- Обратная совместимость для мультибот-режима ---
     @property
     def bot1_token(self) -> str:
         return (self.BOT1_TOKEN or self.BOT1_TOKE or "").strip()
@@ -55,5 +102,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+
 
 settings = Settings()

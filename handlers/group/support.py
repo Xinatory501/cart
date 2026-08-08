@@ -1,4 +1,4 @@
-﻿import html
+import html
 import logging
 from typing import Optional
 
@@ -286,6 +286,173 @@ async def ban_user_handler(callback: CallbackQuery):
     await callback.answer("Пользователь заблокирован", show_alert=True)
 
 
+@router.message(Command("claim"))
+async def claim_case(message: Message):
+    if not _in_support_group(message):
+        return
+    thread_id = message.message_thread_id
+    if not thread_id:
+        return
+    
+    async with get_session() as session:
+        chat_repo = ChatRepository(session)
+        case_session = await chat_repo.get_session_by_thread_id(thread_id)
+        if not case_session:
+            await message.answer("Активное обращение не найдено.")
+            return
+            
+        owner_id = message.from_user.id
+        await chat_repo.assign_owner(case_session.id, owner_id)
+        
+        username = message.from_user.username or str(owner_id)
+        await message.answer(f"✅ @{username} принял обращение #{case_session.ticket_code}")
+
+@router.message(Command("unclaim"))
+async def unclaim_case(message: Message):
+    if not _in_support_group(message):
+        return
+    thread_id = message.message_thread_id
+    if not thread_id:
+        return
+        
+    async with get_session() as session:
+        chat_repo = ChatRepository(session)
+        case_session = await chat_repo.get_session_by_thread_id(thread_id)
+        if not case_session:
+            await message.answer("Активное обращение не найдено.")
+            return
+            
+        await chat_repo.update_case_status(
+            session_id=case_session.id,
+            new_status="QUEUED",
+            actor_id=message.from_user.id,
+            actor_role="support",
+            note="Unclaimed"
+        )
+        # Also need to clear owner_id
+        from sqlalchemy import update
+        from database.models import ChatSession
+        await session.execute(
+            update(ChatSession).where(ChatSession.id == case_session.id).values(owner_id=None)
+        )
+        await session.commit()
+        
+        await message.answer(f"✅ Обращение #{case_session.ticket_code} возвращено в очередь.")
+
+@router.message(Command("resolve"))
+async def resolve_case(message: Message):
+    if not _in_support_group(message):
+        return
+    thread_id = message.message_thread_id
+    if not thread_id:
+        return
+        
+    async with get_session() as session:
+        chat_repo = ChatRepository(session)
+        case_session = await chat_repo.get_session_by_thread_id(thread_id)
+        if not case_session:
+            await message.answer("Активное обращение не найдено.")
+            return
+            
+        await chat_repo.update_case_status(
+            session_id=case_session.id,
+            new_status="RESOLVED",
+            actor_id=message.from_user.id,
+            actor_role="support"
+        )
+        
+        user_id = case_session.user_id
+        ticket_code = case_session.ticket_code
+        session_id = case_session.id
+        
+    # Send CSAT to user
+    from keyboards.menu import get_csat_keyboard
+    try:
+        await message.bot.send_message(
+            chat_id=user_id,
+            text=f"✅ Ваше обращение #{ticket_code} решено оператором. Оцените качество поддержки:",
+            reply_markup=get_csat_keyboard("ru", session_id)
+        )
+        await message.answer(f"✅ Обращение #{ticket_code} решено. Запрос оценки отправлен пользователю.")
+    except Exception as e:
+        logger.error("Failed to send CSAT to user: %s", e)
+        await message.answer("⚠️ Обращение решено, но не удалось отправить пользователю запрос оценки.")
+
+@router.message(Command("status"))
+async def status_case(message: Message):
+    if not _in_support_group(message):
+        return
+    thread_id = message.message_thread_id
+    if not thread_id:
+        return
+        
+    async with get_session() as session:
+        chat_repo = ChatRepository(session)
+        case_session = await chat_repo.get_session_by_thread_id(thread_id)
+        if not case_session:
+            await message.answer("Активное обращение не найдено.")
+            return
+            
+        history = await chat_repo.get_session_history(case_session.id, limit=100)
+        msg_count = len(history)
+        
+    status_text = (
+        f"📋 <b>Информация об обращении:</b>\n"
+        f"Тикет: #{case_session.ticket_code}\n"
+        f"Статус: {case_session.case_status}\n"
+        f"Владелец (ID): {case_session.owner_id or 'Нет'}\n"
+        f"Открыто: {case_session.started_at}\n"
+        f"Сообщений: {msg_count}"
+    )
+    await message.answer(status_text, parse_mode="HTML")
+
+@router.message(Command('hint'), F.chat.id == settings.SUPPORT_GROUP_ID)
+async def cmd_hint(message: Message):
+    """
+    OPS-11: Generate AI draft response for operator.
+    Usage: /hint in a support thread
+    Sends a private draft ONLY to the operator (via reply in thread)
+    """
+    thread_id = message.message_thread_id
+    if not thread_id:
+        await message.reply('⚠️ Команда /hint работает только в теме обращения.')
+        return
+    
+    # Find session by thread_id
+    async with get_session() as session:
+        chat_repo = ChatRepository(session)
+        case_session = await chat_repo.get_session_by_thread_id(thread_id)
+        if not case_session:
+            await message.reply('❌ Обращение не найдено для этой темы.')
+            return
+        history = await chat_repo.get_session_history(case_session.id, limit=10)
+        training_repo = TrainingRepository(session)
+        
+        ai_service = await AIService.get_service()
+        if not ai_service:
+            await message.reply('❌ AI недоступен.')
+            return
+        
+        system_prompt = await ai_service.get_system_prompt(training_repo, language='ru')
+        system_prompt += '\n\nSPECIAL MODE: Generate a suggested DRAFT response for the support operator. Be concise and professional. Start with: "ЧЕРНОВИК ОТВЕТА:\n"'
+        
+        messages = [{'role': m.role, 'content': m.content} for m in history if m.role in ('user','assistant')]
+        if not messages:
+            await message.reply('❌ История диалога пуста.')
+            return
+    
+    # Generate draft
+    draft_parts = []
+    async for chunk in ai_service.get_response_stream(messages, system_prompt):
+        draft_parts.append(chunk)
+    draft = ''.join(draft_parts)
+    
+    # Send as reply in thread (visible only in thread context)
+    await message.reply(
+        f'🤖 <b>AI черновик ответа</b>\n\n{draft}\n\n<i>Отредактируйте и отправьте пользователю вручную.</i>',
+        parse_mode='HTML',
+    )
+
 @router.message(F.message_thread_id)
 async def handle_support_message(message: Message):
     if not _in_support_group(message):
@@ -318,25 +485,64 @@ async def handle_support_message(message: Message):
         await chat_repo.deactivate_ai(user.id)
 
     try:
-        await message.bot.send_message(
-            chat_id=user.id,
-            text=get_text("support_response", user.language).format(text=safe_text),
-            parse_mode="HTML",
-        )
+        media_type = None
+        file_id = None
+        attachment_type = "[Вложение]"
+        if message.photo:
+            media_type = "photo"
+            file_id = message.photo[-1].file_id
+            attachment_type = "[Фото]"
+        elif message.document:
+            media_type = "document"
+            file_id = message.document.file_id
+            attachment_type = "[Документ]"
+        elif message.video:
+            media_type = "video"
+            file_id = message.video.file_id
+            attachment_type = "[Видео]"
+        elif message.voice:
+            media_type = "voice"
+            file_id = message.voice.file_id
+            attachment_type = "[Голосовое сообщение]"
+        elif message.audio:
+            media_type = "audio"
+            file_id = message.audio.file_id
+            attachment_type = "[Аудио]"
+        elif message.sticker:
+            media_type = "sticker"
+            file_id = message.sticker.file_id
+            attachment_type = "[Стикер]"
+
+        content_to_save = message.text or message.caption or attachment_type
+
+        if not media_type:
+            await message.bot.send_message(
+                chat_id=user.id,
+                text=get_text("support_response", user.language).format(text=safe_text),
+                parse_mode="HTML",
+            )
+        else:
+            await message.bot.copy_message(
+                chat_id=user.id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
 
         async with get_session() as session:
             chat_repo = ChatRepository(session)
             await chat_repo.add_message(
-                user.id,
-                "support",
-                forwarded_text,
+                user_id=user.id,
+                role="support",
+                content=content_to_save,
                 is_ai_handled=False,
+                media_type=media_type,
+                file_id=file_id
             )
 
         if was_ai_active:
-            await message.answer("? Сообщение отправлено пользователю. AI выключен.")
+            await message.answer("✅ Сообщение отправлено пользователю. AI выключен.")
         else:
-            await message.answer("? Сообщение отправлено пользователю.")
+            await message.answer("✅ Сообщение отправлено пользователю.")
 
     except Exception as error:
         logger.error("Failed to forward support message to user %s: %s", user.id, error)

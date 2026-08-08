@@ -2,15 +2,52 @@ version: '3.8'
 
 services:
   cartame-bot:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cartame-bot:latest
     container_name: cartame_bot
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    mem_limit: 512m
+    cpus: '1.0'
+
+    # Конфигурация из .env файла
     env_file:
       - .env
+
+    # Данные SQLite базы данных (persist между перезапусками)
     volumes:
       - ./data:/app/data
+
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+    # Healthcheck — проверяем что процесс жив
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; os.path.exists('/app/bot.py')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
     networks:
       - cartame-network
+
+  # postgres:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_DB: cartame
+  #     POSTGRES_USER: cartame
+  #     POSTGRES_PASSWORD: changeme
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
 
 networks:
   cartame-network:

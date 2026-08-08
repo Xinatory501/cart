@@ -9,9 +9,16 @@ class AdminStates(StatesGroup):
 
     entering_privacy_url = State()
 
+    entering_brand_name = State()
+    entering_brand_contacts = State()
+    entering_brand_privacy_url = State()
+    entering_brand_schedule = State()
+    entering_languages = State()
+
     entering_training_message = State()
     entering_training_priority = State()
     editing_training_content = State()
+    entering_base_system_prompt = State()
 
     entering_user_id = State()
     viewing_user_info = State()
@@ -35,3 +42,6 @@ class AdminStates(StatesGroup):
     entering_remote_provider_model = State()
     entering_support_group_id = State()
     uploading_backup = State()
+    entering_export_ticket = State()  # ADM-13: ввод тикета для экспорта
+    entering_critical_chat_id = State()
+    entering_schedule_value = State()

@@ -25,9 +25,17 @@ async def show_training_messages(callback: CallbackQuery):
     keyboard = []
 
     for msg in messages:
+        status_badge = ""
+        if msg.kb_status == "draft":
+            status_badge = "[DRAFT]"
+        elif msg.kb_status == "approved":
+            status_badge = "[APPROVED]"
+        elif msg.kb_status == "retired":
+            status_badge = "[RETIRED]"
+            
         status = "✅" if msg.is_active else "❌"
         content_preview = msg.content[:50] + "..." if len(msg.content) > 50 else msg.content
-        button_text = f"{status} {content_preview}"
+        button_text = f"{status_badge} {status} [ID: {msg.id}] {content_preview}"
         keyboard.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"view_training_{msg.id}"
@@ -57,10 +65,19 @@ async def view_training_message(callback: CallbackQuery):
             return
 
     status = "Активно ✅" if msg.is_active else "Неактивно ❌"
+    
+    status_badge = ""
+    if msg.kb_status == "draft":
+        status_badge = "[DRAFT] Требует утверждения"
+    elif msg.kb_status == "approved":
+        status_badge = "[APPROVED] Активно в контексте"
+    elif msg.kb_status == "retired":
+        status_badge = "[RETIRED] В архиве"
 
     text = (
-        f"📚 <b>Обучающее сообщение #{msg.id}</b>\n\n"
-        f"<b>Статус:</b> {status}\n\n"
+        f"📚 <b>Правило Базы знаний #{msg.id}</b>\n\n"
+        f"<b>Статус активности:</b> {status}\n"
+        f"<b>Статус KB:</b> {status_badge}\n\n"
         f"<b>Содержание:</b>\n"
         f"<code>{msg.content}</code>"
     )
@@ -68,9 +85,17 @@ async def view_training_message(callback: CallbackQuery):
     keyboard = [
         [InlineKeyboardButton(text="✏️ Изменить содержание", callback_data=f"edit_training_content_{msg_id}")],
         [InlineKeyboardButton(text="🔄 Вкл/Выкл", callback_data=f"toggle_training_{msg_id}")],
+    ]
+    
+    if msg.kb_status != "approved":
+        keyboard.append([InlineKeyboardButton(text="✅ Утвердить", callback_data=f"admin_kb_approve_{msg_id}")])
+    if msg.kb_status != "retired":
+        keyboard.append([InlineKeyboardButton(text="🗃 Архивировать", callback_data=f"admin_kb_retire_{msg_id}")])
+        
+    keyboard.extend([
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_training_{msg_id}")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_training")]
-    ]
+    ])
 
     await callback.message.edit_text(
         text,
@@ -104,8 +129,7 @@ async def save_edited_content(message: Message, state: FSMContext):
         msg = next((m for m in messages if m.id == msg_id), None)
 
         if msg:
-            await training_repo.delete(msg_id)
-            await training_repo.add(role="system", content=new_content, priority=0)
+            await training_repo.update_content(msg_id, new_content)
             await admin_repo.log_action(
                 message.from_user.id,
                 "edit_training_message",
@@ -204,3 +228,29 @@ async def save_training_message(message: Message, state: FSMContext):
 
     await message.answer("✅ Обучающее сообщение добавлено!")
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("admin_kb_approve_"))
+async def approve_training_message(callback: CallbackQuery):
+    msg_id = int(callback.data.split("_")[3])
+    async with get_session() as session:
+        training_repo = TrainingRepository(session)
+        admin_repo = AdminRepository(session)
+        await training_repo.approve(msg_id, reviewer_id=callback.from_user.id)
+        await admin_repo.log_action(callback.from_user.id, "approve_training", details=f"Approved #{msg_id}")
+    await callback.answer("✅ Правило утверждено", show_alert=True)
+    callback.data = f"view_training_{msg_id}"
+    await view_training_message(callback)
+
+
+@router.callback_query(F.data.startswith("admin_kb_retire_"))
+async def retire_training_message(callback: CallbackQuery):
+    msg_id = int(callback.data.split("_")[3])
+    async with get_session() as session:
+        training_repo = TrainingRepository(session)
+        admin_repo = AdminRepository(session)
+        await training_repo.retire(msg_id)
+        await admin_repo.log_action(callback.from_user.id, "retire_training", details=f"Retired #{msg_id}")
+    await callback.answer("✅ Правило перенесено в архив", show_alert=True)
+    callback.data = f"view_training_{msg_id}"
+    await view_training_message(callback)

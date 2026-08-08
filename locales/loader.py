@@ -1,10 +1,12 @@
+from __future__ import annotations
 
 import json
 import os
 from typing import Dict
 
 LOCALES_DIR = os.path.dirname(__file__)
-SUPPORTED_LANGUAGES = ["en", "ru", "uz", "kz"]
+SUPPORTED_LANGUAGES = ["en", "ru", "uz", "kz", "kk"]
+LANG_ALIASES = {'kz': 'kk'}  # kz is old alias for kk (Kazakh)
 
 _translations: Dict[str, Dict] = {}
 
@@ -20,6 +22,9 @@ def load_translations():
 def get_text(key: str, language: str = "en", **kwargs) -> str:
     if not _translations:
         load_translations()
+
+    if language in LANG_ALIASES:
+        language = LANG_ALIASES[language]
 
     if language not in _translations:
         language = "en"

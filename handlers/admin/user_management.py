@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
@@ -17,6 +18,23 @@ async def request_user_id(callback: CallbackQuery, state: FSMContext):
         "👤 Введите ID пользователя или @username:"
     )
     await state.set_state(AdminStates.entering_user_id)
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_roles")
+async def show_roles_management(callback: CallbackQuery):
+    text = (
+        "👥 Роли пользователей\n\n"
+        "Доступные роли:\n"
+        "• user — обычный пользователь\n"
+        "• operator — оператор поддержки\n"
+        "• supervisor — супервизор\n"
+        "• project_admin — администратор проекта\n"
+        "• superadmin — суперадминистратор\n\n"
+        "Для изменения роли используйте 'Информация о пользователе' и укажите роль через кнопки управления."
+    )
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Назад", callback_data="admin_menu")]])
+    await callback.message.answer(text, reply_markup=markup)
     await callback.answer()
 
 @router.message(AdminStates.entering_user_id)
@@ -152,3 +170,43 @@ async def revoke_admin(callback: CallbackQuery):
         )
 
     await callback.answer("✅ Права администратора отозваны", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin_gdpr_delete_confirm_"))
+async def gdpr_delete_confirm(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[4])
+    
+    from services.retention_service import RetentionService
+    retention_service = RetentionService()
+    await retention_service.delete_user_data(user_id)
+    
+    async with get_session() as session:
+        admin_repo = AdminRepository(session)
+        await admin_repo.log_action(
+            callback.from_user.id,
+            "gdpr_delete",
+            target_user_id=user_id
+        )
+        
+    await callback.answer("✅ Данные пользователя удалены (GDPR)", show_alert=True)
+    await callback.message.edit_text("✅ Пользователь был удалён по запросу (GDPR Право на забвение).")
+
+@router.callback_query(F.data.startswith("admin_gdpr_delete_"))
+async def gdpr_delete_prompt(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[3])
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⚠️ Да, безвозвратно удалить", callback_data=f"admin_gdpr_delete_confirm_{user_id}")],
+        [InlineKeyboardButton(text="Отмена", callback_data="admin_menu")]
+    ])
+    
+    await callback.message.answer(
+        "⚠️ <b>Внимание!</b>\n\nВы собираетесь безвозвратно удалить данные пользователя (GDPR Право на забвение).\n\n"
+        "• Все сообщения будут удалены\n"
+        "• Сессии будут закрыты\n"
+        "• Имя пользователя будет анонимизировано\n\n"
+        "Подтверждаете удаление?",
+        reply_markup=markup,
+        parse_mode="HTML"
+    )
+    await callback.answer()

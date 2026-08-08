@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import asyncio
 import html
 import logging
 import re
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Union
 
 from aiogram import Bot
 
@@ -52,7 +54,7 @@ class PendingService:
     _concurrency_limit = 4
 
     @staticmethod
-    async def process_pending_requests(bots: Sequence[Bot] | Bot):
+    async def process_pending_requests(bots: Union[Sequence[Bot], Bot]):
         logger.info("Starting pending queue processing")
 
         if isinstance(bots, Bot):
