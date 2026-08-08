@@ -19,3 +19,4 @@ reportlab==4.2.5
 
 # === Security ===
 cryptography==44.0.0
+hvac==2.3.0

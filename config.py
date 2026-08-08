@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "text"
     LOG_LEVEL: str = "INFO"
     CORS_ALLOWED_ORIGINS: str = "http://localhost:3000"
+    
+    # ---- HashiCorp Vault (ADM-04) ----
+    VAULT_ADDR: str = ""
+    VAULT_TOKEN: str = ""
+    VAULT_MOUNT_POINT: str = "transit"
+    VAULT_KEY_NAME: str = "cartame-key"
 
     # ---- Локализация ----
     DEFAULT_LANGUAGE: str = "ru"
