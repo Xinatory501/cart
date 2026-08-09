@@ -1,0 +1,35 @@
+Инструкция по запуску CartaMe Bot
+
+1. Минимальные системные требования
+   - Установленный Docker и Docker Compose (рекомендуется)
+   - Или Python версии 3.9+ для локального запуска без контейнеров
+
+2. Обязательные настройки в файле .env
+   Перед запуском создайте в корне проекта файл .env и заполните следующие переменные:
+   - BOT_TOKEN: Токен вашего Telegram-бота, полученный от @BotFather.
+   - ADMIN_IDS: Telegram ID администраторов через запятую (например, 821315597).
+   - SUPPORT_GROUP_ID: ID супергруппы Telegram, где будут создаваться темы поддержки.
+   - SECRET_ENCRYPTION_KEY: Ключ симметричного шифрования Fernet. Сгенерируйте его командой:
+     python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+3. Необязательные настройки в файле .env
+   - DATABASE_URL: Строка подключения к БД. По умолчанию используется SQLite (sqlite+aiosqlite:///data/cartame_bot.db).
+     Для переключения на PostgreSQL укажите: postgresql+asyncpg://user:password@host:5432/db_name
+   - VAULT_ADDR и VAULT_TOKEN: Адрес и токен HashiCorp Vault. Если заполнены, ключи AI будут шифроваться внешним Vault Transit Engine.
+     Если оставить пустыми, бот автоматически переключится на встроенное Fernet-шифрование с использованием SECRET_ENCRYPTION_KEY.
+   - WEB_API_TOKEN: Токен авторизации для внешних запросов к Web API (WEB-06).
+
+4. Инструкция по запуску
+   В терминале из папки проекта выполните:
+   docker compose up -d --build
+
+   Для проверки логов запустите:
+   docker compose logs -f
+
+5. Как устроена миграция базы данных
+   - В проект встроен механизм программной автоматической миграции (self-migration) при старте.
+   - Сносить старую базу данных или вручную запускать команды Alembic на сервере не требуется.
+   - Бот при инициализации сам проверяет наличие необходимых таблиц и колонок (включая media_type, file_id и vector_embedding) и досоздает их в существующей БД SQLite или PostgreSQL без потери данных.
+   - Для обновления проекта на сервере достаточно выполнить:
+     git pull origin main
+     docker compose up -d --build
