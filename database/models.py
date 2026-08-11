@@ -28,6 +28,7 @@ class User(Base):
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     ban_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     thread_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    phone_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # PII
     # Согласие на обработку данных
     consent_version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     consent_given_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -308,3 +309,55 @@ class ClarificationContext(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     answered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class Region(Base):
+    """Региональный профиль (BY, KZ, UZ) (CT-P0-07)"""
+    __tablename__ = "regions"
+
+    code: Mapped[str] = mapped_column(String(10), primary_key=True)  # BY, KZ, UZ
+    name: Mapped[str] = mapped_column(String(100))
+    timezone: Mapped[str] = mapped_column(String(50), default="UTC")
+    languages: Mapped[str] = mapped_column(String(100), default="ru")  # comma-separated
+    allowed_project_types: Mapped[str] = mapped_column(String(100), default="BUSINESS")  # comma-separated
+    data_policy: Mapped[str] = mapped_column(String(50), default="LOCAL")  # GDPR, LGPD, LOCAL
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ProjectProfile(Base):
+    """Шаблон конфигурации проекта (BUSINESS, BANK) (CT-P0-07)"""
+    __tablename__ = "project_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100))  # BUSINESS_DEFAULT, BANK_DEFAULT
+    project_type: Mapped[str] = mapped_column(String(20))  # BUSINESS, BANK
+    required_modules: Mapped[str] = mapped_column(Text)  # JSON/text list
+    config_defaults: Mapped[str] = mapped_column(Text)  # JSON dict
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class BotInstance(Base):
+    """Конкретный экземпляр бота (инстанс) (CT-P0-07)"""
+    __tablename__ = "bot_instances"
+
+    instance_id: Mapped[str] = mapped_column(String(100), primary_key=True)  # unique instance key
+    token: Mapped[str] = mapped_column(String(255))
+    region_code: Mapped[str] = mapped_column(String(10), ForeignKey("regions.code"))
+    project_type: Mapped[str] = mapped_column(String(20))  # BUSINESS, BANK
+    status: Mapped[str] = mapped_column(String(30), default="ready")  # ready, active, suspended, archived
+    support_group_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ProvisioningEvent(Base):
+    """События жизненного цикла инстансов (readiness, activation, suspend, rollback) (CT-P0-07)"""
+    __tablename__ = "provisioning_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    instance_id: Mapped[str] = mapped_column(String(100), ForeignKey("bot_instances.instance_id"))
+    event_type: Mapped[str] = mapped_column(String(50))  # create, activate, suspend, rollback
+    actor_id: Mapped[int] = mapped_column(BigInteger)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

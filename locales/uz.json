@@ -62,5 +62,9 @@
   "privacy_consent_required": "Davom etish uchun ma'lumotlarni qayta ishlash shartlarini qabul qilish kerak.",
   "accept_privacy": "✅ Qabul qilaman",
   "decline_privacy": "❌ Rad etish",
-  "help_text": "📖 Yordam\n\nMavjud buyruqlar:\n/start — Ishni boshlash\n/help — Yordam\n\nMurojaatni qanday yaratish kerak:\n1. \"🆕 Yangi chat boshlash\" tugmasini bosing\n2. Muammoingizni tasvirlab bering\n3. AI yordamchisi savolingizga javob beradi\n4. Agar operator kerak bo'lsa — \"operator\" yoki \"odam chaqirish\" deb yozing\n\nMurojaat raqami:\nMurojaat yaratishda siz 6 xonali kod olasiz. Holatni kuzatish uchun uni saqlang.\n\nQo'llab-quvvatlash ish jadvali:\nDu-Ju: 09:00-18:00\nSh-Ya: dam olish kuni\n\nAgar bot javob bermasa — /start ni sinab ko'ring"
+  "help_text": "📖 Yordam\n\nMavjud buyruqlar:\n/start — Ishni boshlash\n/help — Yordam\n\nMurojaatni qanday yaratish kerak:\n1. \"🆕 Yangi chat boshlash\" tugmasini bosing\n2. Muammoingizni tasvirlab bering\n3. AI yordamchisi savolingizga javob beradi\n4. Agar operator kerak bo'lsa — \"operator\" yoki \"odam chaqirish\" deb yozing\n\nMurojaat raqami:\nMurojaat yaratishda siz 6 xonali kod olasiz. Holatni kuzatish uchun uni saqlang.\n\nQo'llab-quvvatlash ish jadvali:\nDu-Ju: 09:00-18:00\nSh-Ya: dam olish kuni\n\nAgar bot javob bermasa — /start ni sinab ko'ring",
+  "request_phone": "📱 Qo'llab-quvvatlash xizmati to'g'ri ishlashi uchun, iltimos, quyidagi tugma orqali telefon raqamingizni yuboring:",
+  "share_phone_btn": "📱 Telefon raqamni yuborish",
+  "phone_not_owner": "⚠️ Iltimos, faqat o'z kontakt raqamingizni pastdagi «📱 Telefon raqamni yuborish» tugmasi orqali yuboring.",
+  "phone_saved": "✅ Telefon raqami muvaffaqiyatli saqlandi!"
 }

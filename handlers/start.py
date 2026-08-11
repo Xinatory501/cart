@@ -13,13 +13,13 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery, FSInputFile, InlineKeyboardButton,
-    InlineKeyboardMarkup, Message
+    InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 )
 
 from config import settings
 from database.database import get_session
 from database.repository import UserRepository, ConfigRepository
-from keyboards.menu import get_main_menu_keyboard
+from keyboards.menu import get_main_menu_keyboard, get_phone_request_keyboard
 from locales.loader import get_text
 from services.bot_profile_service import get_default_language_for_bot, set_user_bot_key
 from services.thread_service import ThreadService
@@ -123,17 +123,32 @@ async def cmd_start(message: Message, state: FSMContext):
 
         await state.set_state(UserStates.choosing_language)
     else:
-        # Возвращающийся пользователь — сразу в меню
+        # Возвращающийся пользователь
         async with get_session() as session:
             user_repo = UserRepository(session)
             user = await user_repo.get_by_id(user_id)
             has_consent = bool(user and user.consent_given_at)
+            has_phone = bool(user and user.phone_number)
 
         if not has_consent:
             # Нужно получить согласие
             await _show_privacy_consent(message, language, state)
+        elif not has_phone:
+            # Обязательный запрос номера телефона
+            await _request_phone_number(message, language, state)
         else:
             await _show_main_menu(message, language)
+
+
+async def _request_phone_number(message: Message, language: str, state: FSMContext):
+    """Показывает запрос номера телефона с кнопкой отправки собственного контакта."""
+    await state.set_state(UserStates.sharing_phone)
+    prompt_text = get_text("request_phone", language)
+    await message.answer(
+        prompt_text,
+        reply_markup=get_phone_request_keyboard(language),
+        parse_mode="HTML"
+    )
 
 
 async def _show_privacy_consent(message: Message, language: str, state: FSMContext):
@@ -225,18 +240,26 @@ async def choose_language(callback: CallbackQuery, state: FSMContext):
                 parse_mode="HTML",
             )
     else:
-        await state.clear()
-        greeting = get_text("greeting", language)
-        try:
-            await callback.message.edit_caption(
-                caption=greeting,
-                reply_markup=get_main_menu_keyboard(language, has_history=False),
-            )
-        except Exception:
-            await callback.message.answer(
-                greeting,
-                reply_markup=get_main_menu_keyboard(language, has_history=False),
-            )
+        async with get_session() as session:
+            user_repo = UserRepository(session)
+            user = await user_repo.get_by_id(user_id)
+            has_phone = bool(user and user.phone_number)
+
+        if not has_phone:
+            await _request_phone_number(callback.message, language, state)
+        else:
+            await state.clear()
+            greeting = get_text("greeting", language)
+            try:
+                await callback.message.edit_caption(
+                    caption=greeting,
+                    reply_markup=get_main_menu_keyboard(language, has_history=False),
+                )
+            except Exception:
+                await callback.message.answer(
+                    greeting,
+                    reply_markup=get_main_menu_keyboard(language, has_history=False),
+                )
 
     await callback.answer()
 
@@ -262,20 +285,25 @@ async def accept_privacy(callback: CallbackQuery, state: FSMContext):
             )
         )
         await session.commit()
+        await session.refresh(user)
+        has_phone = bool(user.phone_number)
 
-    await state.clear()
-    greeting = get_text("greeting", language)
+    if not has_phone:
+        await _request_phone_number(callback.message, language, state)
+    else:
+        await state.clear()
+        greeting = get_text("greeting", language)
 
-    try:
-        await callback.message.edit_caption(
-            caption=greeting,
-            reply_markup=get_main_menu_keyboard(language, has_history=False),
-        )
-    except Exception:
-        await callback.message.answer(
-            greeting,
-            reply_markup=get_main_menu_keyboard(language, has_history=False),
-        )
+        try:
+            await callback.message.edit_caption(
+                caption=greeting,
+                reply_markup=get_main_menu_keyboard(language, has_history=False),
+            )
+        except Exception:
+            await callback.message.answer(
+                greeting,
+                reply_markup=get_main_menu_keyboard(language, has_history=False),
+            )
     await callback.answer()
 
 
@@ -294,3 +322,76 @@ async def decline_privacy(callback: CallbackQuery, state: FSMContext):
         "Используйте /start чтобы попробовать снова.",
     )
     await callback.answer()
+
+
+@router.message(UserStates.sharing_phone, F.contact)
+async def process_phone_contact(message: Message, state: FSMContext):
+    """Обработка контакта пользователя с проверкой подлинности (принадлежности контакта)."""
+    contact = message.contact
+    user_id = message.from_user.id
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        language = user.language if user else "ru"
+
+    # Важно: проверяем, что контакт принадлежит именно отправителю
+    if not contact or contact.user_id != user_id:
+        await message.answer(
+            get_text("phone_not_owner", language),
+            reply_markup=get_phone_request_keyboard(language),
+            parse_mode="HTML"
+        )
+        return
+
+    phone_number = (contact.phone_number or "").strip()
+    if not phone_number.startswith("+"):
+        phone_number = f"+{phone_number}"
+
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        await user_repo.update_phone_number(user_id, phone_number)
+
+    # Уведомляем тему поддержки или создаем ее с обновленной информацией
+    thread_service = ThreadService(message.bot)
+    thread_id = await thread_service.get_thread_id_for_user(user_id)
+    if thread_id and thread_service.support_group_id:
+        try:
+            await message.bot.send_message(
+                chat_id=thread_service.support_group_id,
+                message_thread_id=thread_id,
+                text=f"📱 <b>Пользователь подтвердил номер телефона:</b> <code>{phone_number}</code>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+    else:
+        await thread_service.ensure_thread_for_user(
+            user_id=user_id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+
+    await state.clear()
+    await message.answer(
+        get_text("phone_saved", language),
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="HTML"
+    )
+    await _show_main_menu(message, language)
+
+
+@router.message(UserStates.sharing_phone)
+async def process_phone_fallback(message: Message, state: FSMContext):
+    """Пользователь отправил не контакт — не даем пройти дальше."""
+    user_id = message.from_user.id
+    async with get_session() as session:
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_id(user_id)
+        language = user.language if user else "ru"
+
+    await message.answer(
+        get_text("phone_not_owner", language),
+        reply_markup=get_phone_request_keyboard(language),
+        parse_mode="HTML"
+    )

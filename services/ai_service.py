@@ -145,7 +145,9 @@ class AIService:
         return api_key.name or f"key#{api_key.id}"
 
     def _effective_api_key(self) -> str:
-        key = APIKeyRepository.normalize_api_key(self.api_key.api_key)
+        from utils.encryption import decrypt_value
+        decrypted = decrypt_value(self.api_key.api_key)
+        key = APIKeyRepository.normalize_api_key(decrypted)
         if key:
             return key
         if self._is_local_provider(self.provider):

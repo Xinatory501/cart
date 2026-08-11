@@ -59,30 +59,59 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         finally:
             await session.close()
 
-async def init_db() -> None:
-    engine = get_engine()
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Программная миграция: автодобавление новых колонок для вложений в старые базы данных (ADM-18)
-    async with engine.begin() as conn:
-        for col_name, col_type in [("media_type", "VARCHAR(50)"), ("file_id", "VARCHAR(255)")]:
-            try:
-                await conn.execute(text(f"ALTER TABLE chat_history ADD COLUMN {col_name} {col_type}"))
-                logger.info("Database migration: Added column %s to chat_history table", col_name)
-            except Exception:
-                pass
-                
-    # Программная миграция: автодобавление колонки vector_embedding в training_messages (AI-09)
-    async with engine.begin() as conn:
+def backup_db() -> None:
+    """Создаёт резервную копию базы данных SQLite перед миграцией."""
+    db_url = settings.DATABASE_URL
+    if db_url.startswith("sqlite"):
+        import os
+        import shutil
+        from datetime import datetime
+        
         try:
-            await conn.execute(text("ALTER TABLE training_messages ADD COLUMN vector_embedding TEXT"))
-            logger.info("Database migration: Added column vector_embedding to training_messages table")
-        except Exception:
-            pass
+            path_part = db_url.split("///")[-1]
+            db_path = os.path.abspath(path_part)
+            
+            if os.path.exists(db_path):
+                backup_dir = os.path.join(os.path.dirname(db_path), "backups")
+                os.makedirs(backup_dir, exist_ok=True)
+                
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                backup_path = os.path.join(backup_dir, f"bot.db.backup_{timestamp}")
+                
+                shutil.copy2(db_path, backup_path)
+                logger.info("Database backup created successfully: %s", backup_path)
+        except Exception as e:
+            logger.error("Failed to create database backup: %s", e)
 
-    logger.info("Database initialized successfully")
+async def init_db() -> None:
+    # 1. Создаём резервную копию перед миграцией
+    backup_db()
+
+    # 2. Программно запускаем миграции Alembic (CT-P0-01)
+    import os
+    from alembic.config import Config
+    from alembic import command
+
+    try:
+        logger.info("Running database migrations...")
+        ini_path = os.path.abspath("alembic.ini")
+        alembic_cfg = Config(ini_path)
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+        
+        # Выполняем миграции в отдельном потоке, чтобы избежать конфликта запущенного event loop (CT-P0-01)
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(command.upgrade, alembic_cfg, "head")
+            future.result()
+            
+        logger.info("Database migrations completed successfully")
+        
+        # Заполняем регионы и шаблоны проектов (CT-P0-07)
+        from services.provisioning_service import bootstrap_provisioning_catalog
+        await bootstrap_provisioning_catalog()
+    except Exception as e:
+        logger.error("Failed to run database migrations or provisioning bootstrap: %s", e)
+        raise e
 
     await init_default_config()
 

@@ -80,6 +80,14 @@ class UserRepository:
         )
         await self.session.commit()
 
+    async def update_phone_number(self, user_id: int, phone_number: str):
+        await self.session.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(phone_number=phone_number, updated_at=datetime.utcnow())
+        )
+        await self.session.commit()
+
     async def ban_user(self, user_id: int, duration_seconds: Optional[int] = None):
         ban_until = (
             datetime.utcnow() + timedelta(seconds=duration_seconds)
@@ -428,7 +436,7 @@ class ChatRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create_session(self, user_id: int, channel: str = "telegram") -> ChatSession:
+    async def create_session(self, user_id: int, channel: str = "telegram", support_thread_id: Optional[int] = None) -> ChatSession:
         """Создаёт новый кейс с уникальным 6-значным тикетом (CASE-01 / TG-03)."""
         # Закрываем предыдущую активную сессию
         await self.session.execute(
@@ -453,6 +461,7 @@ class ChatRepository:
             ticket_code=ticket_code,
             case_status="NEW",
             channel=channel,
+            support_thread_id=support_thread_id,
             sla_first_response_deadline=datetime.utcnow() + timedelta(hours=4)
         )
         self.session.add(session)
@@ -547,6 +556,13 @@ class ChatRepository:
         """Ищет кейс по 6-значному коду тикета."""
         result = await self.session.execute(
             select(ChatSession).where(ChatSession.ticket_code == ticket_code)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_session(self, session_id: int) -> Optional[ChatSession]:
+        """Возвращает кейс по его ID (первичному ключу)."""
+        result = await self.session.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
         )
         return result.scalar_one_or_none()
 
@@ -954,13 +970,20 @@ class APIKeyRepository:
 
     @staticmethod
     def normalize_api_key(api_key: Optional[str]) -> str:
-        from utils.encryption import decrypt_value
         cleaned = (api_key or "").strip()
-        cleaned = decrypt_value(cleaned)
 
+        # 1. Сначала снимаем внешние кавычки
+        if len(cleaned) >= 2 and (
+            (cleaned[0] == '"' and cleaned[-1] == '"') or
+            (cleaned[0] == "'" and cleaned[-1] == "'")
+        ):
+            cleaned = cleaned[1:-1].strip()
+
+        # 2. Убираем префикс Bearer
         if cleaned.lower().startswith("bearer "):
             cleaned = cleaned[7:].strip()
 
+        # 3. Снимаем кавычки еще раз (на случай, если они были под Bearer)
         if len(cleaned) >= 2 and (
             (cleaned[0] == '"' and cleaned[-1] == '"') or
             (cleaned[0] == "'" and cleaned[-1] == "'")
@@ -1082,18 +1105,23 @@ class APIKeyRepository:
         return deactivated
 
     async def normalize_existing_keys(self) -> int:
+        """Мигрирует все нешифрованные ключи в БД в зашифрованный формат (Fernet/Vault) (CT-P0-02)."""
+        from utils.encryption import encrypt_value
         now = datetime.utcnow()
         result = await self.session.execute(select(APIKey))
         keys = list(result.scalars().all())
 
         updated = 0
         for key in keys:
-            normalized = self.normalize_api_key(key.api_key)
-            if normalized != (key.api_key or ""):
+            val = key.api_key or ""
+            # Если ключ еще не зашифрован (не имеет префикса 'enc:' или 'vault:')
+            if not (val.startswith("enc:") or val.startswith("vault:")):
+                normalized = self.normalize_api_key(val)
+                encrypted = encrypt_value(normalized)
                 await self.session.execute(
                     update(APIKey)
                     .where(APIKey.id == key.id)
-                    .values(api_key=normalized, updated_at=now)
+                    .values(api_key=encrypted, updated_at=now)
                 )
                 updated += 1
 
@@ -1109,10 +1137,14 @@ class APIKeyRepository:
         name: Optional[str] = None,
         requests_limit: Optional[int] = None
     ) -> APIKey:
+        from utils.encryption import encrypt_value
+        # 1. Очищаем/нормализуем сырой ввод
         normalized_key = self.normalize_api_key(api_key)
+        # 2. Гарантированно шифруем перед сохранением в БД (CT-P0-02)
+        encrypted_key = encrypt_value(normalized_key)
         key = APIKey(
             provider_id=provider_id,
-            api_key=normalized_key,
+            api_key=encrypted_key,
             name=name,
             requests_limit=requests_limit
         )

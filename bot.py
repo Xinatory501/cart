@@ -83,6 +83,7 @@ async def main():
 
     dp.message.middleware(BanCheckMiddleware())
     dp.message.middleware(AntiFloodMiddleware())
+    dp.message.middleware(AdminAuthMiddleware())
     dp.callback_query.middleware(AdminAuthMiddleware())
 
     dp.include_router(start.router)

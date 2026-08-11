@@ -20,6 +20,10 @@ async def new_chat(callback: CallbackQuery, state: FSMContext):
     """Создаёт новый кейс с уникальным тикетом и отправляет сообщение с кодом."""
     user_id = callback.from_user.id
 
+    from services.thread_service import ThreadService
+    thread_service = ThreadService(callback.bot)
+    existing_thread_id = await thread_service.get_thread_id_for_user(user_id)
+
     async with get_session() as session:
         user_repo = UserRepository(session)
         chat_repo = ChatRepository(session)
@@ -27,12 +31,10 @@ async def new_chat(callback: CallbackQuery, state: FSMContext):
         user = await user_repo.get_by_id(user_id)
         language = user.language if user else "ru"
 
-        # Создаём новый кейс — внутри генерируется тикет
-        new_session = await chat_repo.create_session(user_id, channel="telegram")
+        # Создаём новый кейс — внутри генерируется тикет и передаётся support_thread_id
+        new_session = await chat_repo.create_session(user_id, channel="telegram", support_thread_id=existing_thread_id)
         ticket_code = new_session.ticket_code or "??????"
 
-    from services.thread_service import ThreadService
-    thread_service = ThreadService(callback.bot)
     try:
         await thread_service.rename_thread_for_case(user_id, ticket_code, "NEW")
     except Exception:

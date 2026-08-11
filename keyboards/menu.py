@@ -1,7 +1,11 @@
+from __future__ import annotations
 
 from typing import Optional, Union
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton
+)
 from locales.loader import get_text
 
 
@@ -108,3 +112,16 @@ def get_csat_keyboard(language: str, session_id: Union[int, str]) -> InlineKeybo
     ]
 
     return InlineKeyboardMarkup(inline_keyboard=[row1, row2, row3])
+
+
+def get_phone_request_keyboard(language: str) -> ReplyKeyboardMarkup:
+    """Клавиатура с кнопкой запроса номера телефона пользователя."""
+    button = KeyboardButton(
+        text=get_text("share_phone_btn", language),
+        request_contact=True
+    )
+    return ReplyKeyboardMarkup(
+        keyboard=[[button]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )

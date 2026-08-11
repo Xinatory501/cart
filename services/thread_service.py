@@ -296,11 +296,19 @@ class ThreadService:
         async with get_session() as session:
             config_repo = ConfigRepository(session)
             user_repo = UserRepository(session)
+            from database.repository import ChatRepository
 
             await config_repo.set(self._user_thread_key(user_id), str(thread_id))
             await config_repo.set(self._thread_owner_key(thread_id), self.profile.key)
             await config_repo.set(self._thread_user_key(thread_id), str(user_id))
             await user_repo.update_thread_id(user_id, thread_id)
+
+            # Также привязываем support_thread_id к текущему активному кейсу (CT-P0-05)
+            chat_repo = ChatRepository(session)
+            active_session = await chat_repo.get_active_session(user_id)
+            if active_session:
+                active_session.support_thread_id = thread_id
+                await session.commit()
 
         await set_user_bot_key(user_id, self.profile.key)
 
@@ -402,13 +410,14 @@ class ThreadService:
             return None
 
         try:
-            if not username or not first_name:
-                async with get_session() as session:
-                    user_repo = UserRepository(session)
-                    user = await user_repo.get_by_id(user_id)
-                    if user:
-                        username = username or user.username
-                        first_name = first_name or user.first_name
+            phone_number = None
+            async with get_session() as session:
+                user_repo = UserRepository(session)
+                user = await user_repo.get_by_id(user_id)
+                if user:
+                    username = username or user.username
+                    first_name = first_name or user.first_name
+                    phone_number = user.phone_number
 
             thread_name = self._format_topic_name(user_id, username, first_name)
 
@@ -420,12 +429,14 @@ class ThreadService:
             thread_id = forum_topic.message_thread_id
             await self._save_thread_mapping(user_id, thread_id)
 
+            phone_display = phone_number or "Не указан"
             info_message = (
                 "<b>Новый пользователь</b>\n\n"
                 f"Бот: <code>{self.profile.key}</code>\n"
                 f"User ID: <code>{user_id}</code>\n"
                 f"Username: {f'@{username}' if username else 'Не указан'}\n"
-                f"Имя: {first_name or 'Не указано'}\n\n"
+                f"Имя: {first_name or 'Не указано'}\n"
+                f"Телефон: <code>{phone_display}</code>\n\n"
                 "AI активен.\n"
                 "Сообщение участника в теме отключит AI и уйдет пользователю.\n"
                 "Чтобы включить AI: /ai"

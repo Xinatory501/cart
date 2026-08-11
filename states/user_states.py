@@ -5,6 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 class UserStates(StatesGroup):
     choosing_language = State()
     accepting_privacy = State()   # TG-13: ожидание принятия privacy consent
+    sharing_phone = State()       # Ожидание подтверждения собственного номера телефона
     chatting = State()
     waiting_support = State()
     in_settings = State()

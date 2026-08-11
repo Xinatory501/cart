@@ -14,8 +14,8 @@ python-dotenv==1.0.1
 reportlab==4.2.5
 
 # === PostgreSQL (опционально — когда перейдёте на PG) ===
-# asyncpg==0.30.0  # Раскомментируйте для PostgreSQL
-# alembic==1.14.0  # Миграции для PostgreSQL
+asyncpg==0.30.0  # Раскомментируйте для PostgreSQL
+alembic==1.14.0  # Миграции для PostgreSQL
 
 # === Security ===
 cryptography==44.0.0

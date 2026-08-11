@@ -77,6 +77,7 @@ async def show_user_info(message: Message, state: FSMContext):
 • ID: <code>{user.id}</code>
 • Username: {f'@{user.username}' if user.username else 'Не указан'}
 • Имя: {user.first_name or 'Не указано'} {user.last_name or ''}
+• Телефон: {user.phone_number or 'Не указан'}
 • Язык: {user.language}
 • Роль: {user.role}
 
